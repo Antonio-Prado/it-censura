@@ -178,8 +178,8 @@ Tutta la configurazione avviene tramite variabili d'ambiente. Non sono necessari
 | `CONF_DIR` | `/usr/local/etc/unbound/blacklists.d` | Directory di output per i file `.conf` generati |
 | `WHITELIST` | `$BL_DIR/whitelist.txt` | Domini da escludere da tutte le liste |
 | `CNCPO_FILE` | *(vuoto)* | Percorso del CSV CNCPO. La lista non è scaricabile pubblicamente: viene distribuita agli ISP tramite canale dedicato. |
-| `AAMS_URL` | *(vuoto)* | URL della blacklist ADM giochi (lista in formato testo). Pubblicata dall'[Agenzia delle Dogane e dei Monopoli](https://www.adm.gov.it). |
-| `ADMT_URL` | *(vuoto)* | URL della blacklist ADM tabacchi (lista in formato testo). Stessa fonte. |
+| `AAMS_URL` | *(vuoto)* | URL della blacklist ADM giochi (lista in formato testo). L'URL corrente va recuperato dal portale [ADM](https://www.adm.gov.it), sezione Giochi → elenco siti non autorizzati. |
+| `ADMT_URL` | *(vuoto)* | URL della blacklist ADM tabacchi (lista in formato testo). L'URL corrente va recuperato dal portale [ADM](https://www.adm.gov.it), sezione Tabacchi → elenco siti non autorizzati. |
 
 ---
 
