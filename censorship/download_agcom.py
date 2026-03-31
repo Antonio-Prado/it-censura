@@ -36,7 +36,7 @@ def find_allegato_b() -> str | None:
             resp = requests.get(url, verify=False, timeout=TIMEOUT)
             resp.raise_for_status()
         except Exception as e:
-            print(f"Warning: page {page} fetch failed: {e}", file=sys.stderr)
+            print(f"Attenzione: pagina {page} non scaricabile: {e}", file=sys.stderr)
             break
 
         soup = BeautifulSoup(resp.content, "html.parser")
@@ -55,7 +55,7 @@ def find_allegato_b() -> str | None:
                     det_resp = requests.get(det_url, verify=False, timeout=TIMEOUT)
                     det_resp.raise_for_status()
                 except Exception as e:
-                    print(f"Warning: determina fetch failed: {e}", file=sys.stderr)
+                    print(f"Attenzione: determina non scaricabile: {e}", file=sys.stderr)
                     continue
                 det_soup = BeautifulSoup(det_resp.content, "html.parser")
                 for a in det_soup.find_all("a"):
@@ -73,14 +73,14 @@ def main() -> None:
 
     allegato_url = find_allegato_b()
     if not allegato_url:
-        print("Error: Allegato B not found on AGCOM website.", file=sys.stderr)
+        print("Errore: Allegato B non trovato sul sito AGCOM.", file=sys.stderr)
         sys.exit(1)
 
     try:
         resp = requests.get(allegato_url, verify=False, timeout=60)
         resp.raise_for_status()
     except Exception as e:
-        print(f"Error downloading Allegato B: {e}", file=sys.stderr)
+        print(f"Errore durante il download dell'Allegato B: {e}", file=sys.stderr)
         sys.exit(1)
 
     with open(args.output, "wb") as f:

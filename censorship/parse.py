@@ -107,14 +107,14 @@ def main() -> None:
     out_path = Path(args.output)
 
     if not in_path.exists():
-        print(f'Error: input file not found: {in_path}', file=sys.stderr)
+        print(f'Errore: file di input non trovato: {in_path}', file=sys.stderr)
         sys.exit(1)
 
     domains = parse_cncpo(in_path) if args.format == 'cncpo' else parse_plain(in_path)
 
     invalid = sum(1 for d in domains if not _valid(d))
     if invalid:
-        print(f'Skipping {invalid} invalid domain(s)', file=sys.stderr)
+        print(f'Ignorati {invalid} domini non validi', file=sys.stderr)
     domains = [d for d in domains if _valid(d)]
 
     if args.whitelist:
@@ -122,10 +122,10 @@ def main() -> None:
         before = len(domains)
         domains = [d for d in domains if d not in wl]
         if before - len(domains):
-            print(f'Whitelist: excluded {before - len(domains)} domain(s)', file=sys.stderr)
+            print(f'Whitelist: esclusi {before - len(domains)} domini', file=sys.stderr)
 
     write_unbound(domains, out_path)
-    print(f'{args.format}: {len(domains)} domains → {out_path}', file=sys.stderr)
+    print(f'{args.format}: {len(domains)} domini → {out_path}', file=sys.stderr)
 
 
 if __name__ == '__main__':

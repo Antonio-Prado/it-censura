@@ -52,7 +52,7 @@ def get_pdf_urls() -> list[str]:
             resp = requests.get(url, verify=False, timeout=TIMEOUT)
             resp.raise_for_status()
         except Exception as e:
-            print(f"Warning: index page {page} failed: {e}", file=sys.stderr)
+            print(f"Attenzione: pagina indice {page} non scaricabile: {e}", file=sys.stderr)
             break
 
         soup  = BeautifulSoup(resp.content, "html.parser")
@@ -99,7 +99,7 @@ def extract_from_pdf(pdf_bytes: bytes) -> set[str]:
                     except Exception:
                         pass
     except Exception as e:
-        print(f"Warning: PDF parse error: {e}", file=sys.stderr)
+        print(f"Attenzione: errore nel parsing del PDF: {e}", file=sys.stderr)
     return domains
 
 
@@ -111,7 +111,7 @@ def main() -> None:
     args = parser.parse_args()
 
     pdf_urls = get_pdf_urls()
-    print(f"Found {len(pdf_urls)} PDFs to process", file=sys.stderr)
+    print(f"Trovati {len(pdf_urls)} PDF da elaborare", file=sys.stderr)
 
     all_domains: set[str] = set()
     for pdf_url in pdf_urls:
@@ -120,11 +120,11 @@ def main() -> None:
             resp.raise_for_status()
             all_domains.update(extract_from_pdf(resp.content))
         except Exception as e:
-            print(f"Warning: {pdf_url}: {e}", file=sys.stderr)
+            print(f"Attenzione: {pdf_url}: {e}", file=sys.stderr)
 
     with open(args.output, "w") as f:
         f.write("\n".join(sorted(all_domains)) + "\n")
-    print(f"IVASS: {len(all_domains)} domains → {args.output}", file=sys.stderr)
+    print(f"IVASS: {len(all_domains)} domini → {args.output}", file=sys.stderr)
 
 
 if __name__ == "__main__":

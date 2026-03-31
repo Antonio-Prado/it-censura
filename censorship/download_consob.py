@@ -52,7 +52,7 @@ def scrape() -> list[str]:
         resp = requests.get(INDEX_TPL.format(page=1), verify=False, timeout=TIMEOUT)
         resp.raise_for_status()
     except Exception as e:
-        print(f"Error fetching CONSOB index: {e}", file=sys.stderr)
+        print(f"Errore nel recupero dell'indice CONSOB: {e}", file=sys.stderr)
         sys.exit(1)
 
     soup  = BeautifulSoup(resp.content, "html.parser")
@@ -65,7 +65,7 @@ def scrape() -> list[str]:
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.content, "html.parser")
             except Exception as e:
-                print(f"Warning: page {page} failed: {e}", file=sys.stderr)
+                print(f"Attenzione: pagina {page} non scaricabile: {e}", file=sys.stderr)
                 continue
 
         for div in soup.find_all("div", class_="divContent"):
@@ -89,7 +89,7 @@ def main() -> None:
     domains = scrape()
     with open(args.output, "w") as f:
         f.write("\n".join(domains) + "\n")
-    print(f"CONSOB: {len(domains)} domains → {args.output}", file=sys.stderr)
+    print(f"CONSOB: {len(domains)} domini → {args.output}", file=sys.stderr)
 
 
 if __name__ == "__main__":
