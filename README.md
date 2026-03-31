@@ -1,117 +1,346 @@
 # DNS Blacklist Manager
 
-Web GUI for managing DNS blacklists on [Unbound](https://nlnetlabs.nl/projects/unbound/) — designed for ISPs and network operators that need to apply DNS-based filtering policies.
+Web GUI for managing DNS blacklists on [Unbound](https://nlnetlabs.nl/projects/unbound/).  
+Designed for ISPs and network operators that need to apply DNS-based filtering policies.
 
-## Features
+## Overview
 
-- **Domain search** — search across all blacklists in parallel (fast, grep-based)
-- **Manual blacklist** — add/remove domains via the web UI
-- **Whitelist** — domains excluded from blocking regardless of other lists
-- **Statistics** — entry count per list, cached and refreshed in background
-- **Blacklist update** — trigger an external update script and stream its output live
-- **Unbound reload** — reload the DNS service after changes
-- **User management** — session-based login, multiple users, hashed passwords
-- **Audit log** — every write action and login/logout is logged
+The project consists of two independent components:
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| **Web GUI** | `app.py` + `templates/` | Browser interface to search, manage and monitor blacklists |
+| **Update scripts** | `censorship/` | Download and convert official blacklists to Unbound format |
+
+The two components are loosely coupled via the filesystem: the update scripts write
+`.conf` files to a directory that Unbound loads, and the GUI reads those same files.
+
+---
 
 ## Requirements
 
-```sh
-# FreeBSD
-pkg install py311-flask py311-flask-login
+### System
 
-# Linux / generic
-pip install flask flask-login werkzeug
+- Python 3.10 or later
+- [Unbound](https://nlnetlabs.nl/projects/unbound/) DNS resolver
+- `curl` (for AAMS/ADMT downloads in `update.sh`)
+- FreeBSD or Linux
+
+### Python — Web GUI
+
+```sh
+pip install flask flask-login
+# or on FreeBSD:
+pkg install py311-flask py311-flask-login
 ```
 
-## Blacklist directory layout
+### Python — Update scripts
 
-The GUI auto-discovers all blacklist files in `BL_DIR`. Three file formats are supported:
+```sh
+pip install requests beautifulsoup4 tldextract urlextract pypdf
+```
 
-| Extension | Format | Match pattern |
-|-----------|--------|---------------|
-| `.conf`   | Unbound `local-zone` | `local-zone: domain always_nxdomain` |
-| `.txt`    | Plain domain list or hosts file | `domain` or `0.0.0.0 domain` |
-| `.csv`    | Semicolon-separated | domain follows a `;` on each row |
+---
 
-Two special files are managed by the GUI:
+## Installation
 
-- **`MANUAL_LIST`** — domains added manually via the UI (default: `BL_DIR/manual.txt`)
-- **`WHITELIST`** — domains excluded from blocking (default: `BL_DIR/whitelist.txt`)
+```sh
+# 1. Clone the repository
+git clone https://github.com/Antonio-Prado/it-censura.git
+cd it-censura
 
-## Configuration (environment variables)
+# 2. Install GUI dependencies
+pip install flask flask-login
 
-| Variable          | Default                          | Description                                     |
-|-------------------|----------------------------------|-------------------------------------------------|
-| `BL_DIR`          | `/etc/unbound/blacklists`        | Directory containing all blacklist files        |
-| `MANUAL_LIST`     | `$BL_DIR/manual.txt`             | Path to the manually-managed blacklist          |
-| `WHITELIST`       | `$BL_DIR/whitelist.txt`          | Path to the whitelist                           |
-| `APPLY_CMD`       | *(empty)*                        | Shell command to run after manual/whitelist changes (e.g. reload Unbound config) |
-| `UPDATE_CMD`      | *(empty)*                        | Shell command to run for a full blacklist update |
-| `OFFICIAL_LISTS`  | `AAMS,ADMT,CNCPO,AGCOM,CONSOB,IVASS` | Comma-separated list stems shown with the "official" badge. Defaults to Italian regulatory lists (ADM gambling/tobacco, CNCPO, AGCOM, CONSOB, IVASS). Set to empty string to disable the badge. |
-| `UNBOUND_SERVICE` | `unbound`                        | Service name for `service <name> reload`        |
-| `UNBOUND_CONF_DIR`| `/usr/local/etc/unbound/blacklists.d` | Unbound include directory               |
-| `PORT`            | `5000`                           | HTTP port                                       |
-| `USERS_FILE`      | `<app_dir>/users.json`           | User credentials file                           |
-| `AUDIT_LOG`       | `/var/log/dns_gui_audit.log`     | Audit log path                                  |
-| `SECRET_KEY`      | *(auto-generated)*               | Flask session key                               |
-| `SMTP_HOST`       | *(empty)*                        | SMTP server for password reset emails           |
-| `SMTP_PORT`       | `587`                            |                                                 |
-| `SMTP_USER`       | *(empty)*                        |                                                 |
-| `SMTP_PASSWORD`   | *(empty)*                        |                                                 |
-| `SMTP_FROM`       | `$SMTP_USER`                     |                                                 |
-| `SMTP_TLS`        | `true`                           | Enable STARTTLS                                 |
+# 3. Install update script dependencies
+pip install requests beautifulsoup4 tldextract urlextract pypdf
+
+# 4. Create the blacklist working directory
+mkdir -p /etc/unbound/blacklists
+
+# 5. Create the Unbound include directory (if it doesn't already exist)
+mkdir -p /usr/local/etc/unbound/blacklists.d
+```
+
+---
+
+## Directory layout
+
+```
+/etc/unbound/blacklists/          ← BL_DIR (working directory)
+    raw_agcom.bin                 ← raw downloads (temporary)
+    raw_consob.txt
+    raw_ivass.txt
+    raw_aams.txt
+    raw_admt.txt
+    manual.txt                    ← manually managed list (edited by the GUI)
+    whitelist.txt                 ← domains excluded from all blocking
+
+/usr/local/etc/unbound/blacklists.d/   ← CONF_DIR (Unbound include directory)
+    CNCPO.conf
+    AAMS.conf
+    ADMT.conf
+    AGCOM.conf
+    CONSOB.conf
+    IVASS.conf
+    MANUAL.conf
+```
+
+---
+
+## Unbound configuration
+
+Add the following to your `unbound.conf` to load all generated conf files:
+
+```
+server:
+    include: "/usr/local/etc/unbound/blacklists.d/*.conf"
+```
+
+Each `.conf` file uses the `always_nxdomain` response type:
+
+```
+server:
+local-zone: "example-blocked.com" always_nxdomain
+...
+```
+
+---
+
+## Configuration reference
+
+All configuration is done via environment variables. No config files are needed.
+
+### Web GUI (`app.py`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BL_DIR` | `/etc/unbound/blacklists` | Directory containing blacklist files. The GUI auto-discovers all `.conf`, `.txt`, `.csv` files here. |
+| `MANUAL_LIST` | `$BL_DIR/manual.txt` | Plain-text file managed by the GUI for manual entries |
+| `WHITELIST` | `$BL_DIR/whitelist.txt` | Domains excluded from blocking regardless of other lists |
+| `APPLY_CMD` | *(empty)* | Shell command to run after every manual/whitelist change (e.g. regenerate `MANUAL.conf` and reload Unbound) |
+| `UPDATE_CMD` | *(empty)* | Shell command to run when the "Update lists" button is pressed |
+| `UNBOUND_SERVICE` | `unbound` | Service name used by `service <name> reload` |
+| `UNBOUND_CONF_DIR` | `/usr/local/etc/unbound/blacklists.d` | Unbound include directory (used for reload) |
+| `OFFICIAL_LISTS` | `AAMS,ADMT,CNCPO,AGCOM,CONSOB,IVASS` | Comma-separated list names shown with the "official" badge in the UI. Matches the stem of `.conf` filenames. Set to empty to disable the badge. |
+| `PORT` | `5000` | HTTP port |
+| `USERS_FILE` | `<app_dir>/users.json` | User credentials (generated by `manage_users.py`) |
+| `AUDIT_LOG` | `/var/log/dns_gui_audit.log` | Append-only log of all write actions and logins |
+| `SECRET_KEY` | *(auto-generated)* | Flask session key. Auto-generated and persisted in `secret_key.bin` if not set. |
+| `SMTP_HOST` | *(empty)* | SMTP server for password-reset emails. Leave empty to disable. |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_USER` | *(empty)* | SMTP username |
+| `SMTP_PASSWORD` | *(empty)* | SMTP password |
+| `SMTP_FROM` | `$SMTP_USER` | Sender address for password-reset emails |
+| `SMTP_TLS` | `true` | Enable STARTTLS (`true`/`false`) |
+
+### Update scripts (`censorship/update.sh`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BL_DIR` | `/etc/unbound/blacklists` | Working directory for raw downloads |
+| `CONF_DIR` | `/usr/local/etc/unbound/blacklists.d` | Output directory for generated `.conf` files |
+| `WHITELIST` | `$BL_DIR/whitelist.txt` | Domains to exclude from all generated lists |
+| `CNCPO_FILE` | *(empty)* | Path to the CNCPO CSV file. The CNCPO list is **not publicly downloadable**; ISPs receive it through a dedicated channel. |
+| `AAMS_URL` | *(empty)* | URL of the ADM gambling blacklist (plain-text domain list). Published by [Agenzia delle Dogane e dei Monopoli](https://www.adm.gov.it). |
+| `ADMT_URL` | *(empty)* | URL of the ADM tobacco blacklist (plain-text domain list). Same source as above. |
+
+---
 
 ## Quick start
 
-```sh
-# 1. Create the blacklist directory and add your lists
-mkdir -p /etc/unbound/blacklists
-# copy or symlink your .conf / .txt / .csv blacklist files here
+### 1. Create the first user
 
-# 2. Create the first user
+```sh
 python3 manage_users.py add admin
-
-# 3. Start the GUI
-BL_DIR=/etc/unbound/blacklists \
-  APPLY_CMD="service unbound reload" \
-  UPDATE_CMD="sh /opt/blacklists/update.sh" \
-  python3 app.py
 ```
 
-## Automatic startup (FreeBSD rc.d)
-
-Copy `rc.d/dns-gui` to `/usr/local/etc/rc.d/dns-gui`, then:
+### 2. Configure and run the update scripts
 
 ```sh
-chmod +x /usr/local/etc/rc.d/dns-gui
-sysrc dns_gui_enable="YES"
-sysrc dns_gui_bl_dir="/etc/unbound/blacklists"
-sysrc dns_gui_apply_cmd="service unbound reload"
-service dns-gui start
+export BL_DIR=/etc/unbound/blacklists
+export CONF_DIR=/usr/local/etc/unbound/blacklists.d
+export WHITELIST=$BL_DIR/whitelist.txt
+export CNCPO_FILE=/path/to/cncpo_list.csv   # provided by CNCPO to your ISP
+export AAMS_URL=https://...                  # see ADM portal
+export ADMT_URL=https://...                  # see ADM portal
+
+sh censorship/update.sh
 ```
+
+The script logs progress to stdout. Failures on individual lists are reported
+but do not abort the run; the exit code is non-zero if any list failed.
+
+### 3. Start the GUI
+
+```sh
+BL_DIR=/etc/unbound/blacklists \
+CONF_DIR=/usr/local/etc/unbound/blacklists.d \
+APPLY_CMD="python3 /opt/it-censura/censorship/parse.py \
+    -f plain \
+    -i /etc/unbound/blacklists/manual.txt \
+    -o /usr/local/etc/unbound/blacklists.d/MANUAL.conf \
+    && service unbound reload" \
+UPDATE_CMD="sh /opt/it-censura/censorship/update.sh && service unbound reload" \
+python3 app.py
+```
+
+The GUI is then available at `http://localhost:5000`.
+
+---
+
+## Official Italian blacklists
+
+The update scripts support the following mandatory Italian lists out of the box:
+
+| List | Authority | Subject | Download |
+|------|-----------|---------|----------|
+| `CNCPO` | Polizia Postale | Child sexual abuse material | Distributed to ISPs (not public) |
+| `AAMS` | ADM | Unlicensed gambling websites | Direct URL from ADM portal |
+| `ADMT` | ADM | Tobacco sales websites | Direct URL from ADM portal |
+| `AGCOM` | AGCOM | Copyright infringement | Scraped from AGCOM website |
+| `CONSOB` | CONSOB | Unauthorised financial services | Scraped from CONSOB website |
+| `IVASS` | IVASS | Abusive insurance/broker sites | Extracted from IVASS PDFs |
+| `MANUAL` | — | Court orders / manual entries | Managed directly via the GUI |
+
+The `MANUAL` list is a plain-text file (`BL_DIR/manual.txt`) edited through the GUI.
+Whenever it changes, the GUI runs `APPLY_CMD` to regenerate `MANUAL.conf`.
+
+---
+
+## Manual list workflow
+
+1. Use the GUI to add/remove domains from the manual list
+2. The GUI immediately updates `BL_DIR/manual.txt`
+3. `APPLY_CMD` is executed — it should regenerate `MANUAL.conf` and reload Unbound
+4. Example `APPLY_CMD`:
+
+```sh
+python3 /opt/it-censura/censorship/parse.py \
+    -f plain \
+    -i /etc/unbound/blacklists/manual.txt \
+    -o /usr/local/etc/unbound/blacklists.d/MANUAL.conf \
+  && service unbound reload
+```
+
+---
+
+## Whitelist
+
+Domains in `WHITELIST` are excluded from all lists at parse time:
+
+- `update.sh` passes `-w $WHITELIST` to every `parse.py` call
+- The GUI also reads the whitelist to show the whitelist status in search results
+- Add/remove whitelist entries directly from the GUI
+
+---
+
+## Scheduled updates
+
+Add a cron entry to run `update.sh` weekly (adjust paths and env vars as needed):
+
+```sh
+# /etc/cron.d/dns-blacklist-update  (or equivalent)
+0 3 * * 0  root  \
+  BL_DIR=/etc/unbound/blacklists \
+  CONF_DIR=/usr/local/etc/unbound/blacklists.d \
+  CNCPO_FILE=/etc/unbound/cncpo_list.csv \
+  AAMS_URL=https://... \
+  ADMT_URL=https://... \
+  sh /opt/it-censura/censorship/update.sh \
+  && service unbound reload \
+  >> /var/log/dns_blacklist_update.log 2>&1
+```
+
+Alternatively, use `weekly_update.sh` as a wrapper:
+
+```sh
+UPDATE_CMD="sh /opt/it-censura/censorship/update.sh" \
+  sh weekly_update.sh
+```
+
+---
+
+## Community lists (optional)
+
+If you use community blacklists alongside the official ones (e.g. malware, phishing,
+ads feeds in Unbound format), place them in `BL_DIR` as `BL_*.conf` files and run
+`BL_concat.sh` to merge and deduplicate everything into a single `BL_all.conf`:
+
+```sh
+BL_DIR=/etc/unbound/blacklists \
+CONF_DIR=/usr/local/etc/unbound/blacklists.d \
+sh censorship/BL_concat.sh
+```
+
+`BL_concat.sh` reads official conf files from `CONF_DIR`, community `BL_*.conf` from
+`BL_DIR`, deduplicates, applies the whitelist, and writes `CONF_DIR/BL_all.conf`.
+
+When using `BL_all.conf`, load it explicitly in `unbound.conf` rather than a wildcard:
+
+```
+server:
+    include: "/usr/local/etc/unbound/blacklists.d/BL_all.conf"
+```
+
+---
 
 ## User management
 
 ```sh
-python3 manage_users.py add <username>      # add user (prompts for password)
+python3 manage_users.py add    <username>   # add user (prompts for password)
 python3 manage_users.py passwd <username>   # change password
-python3 manage_users.py list                # list users
-python3 manage_users.py disable <username>  # disable login
-python3 manage_users.py delete <username>   # remove user
+python3 manage_users.py list                # list all users
+python3 manage_users.py enable  <username>  # re-enable a disabled user
+python3 manage_users.py disable <username>  # prevent login without deleting
+python3 manage_users.py delete  <username>  # remove user permanently
 ```
 
-## API
+Users are stored in `users.json` (hashed passwords, `chmod 600`).
 
-| Method   | Endpoint                   | Description                                  |
-|----------|----------------------------|----------------------------------------------|
-| `GET`    | `/api/search?domain=x.com` | Search a domain across all blacklists        |
-| `GET`    | `/api/manual`              | List all manually-blocked domains            |
-| `POST`   | `/api/manual`              | Add `{"domain": "x.com"}` to manual list     |
-| `DELETE` | `/api/manual/<domain>`     | Remove a domain from the manual list         |
-| `GET`    | `/api/whitelist`           | List all whitelisted domains                 |
-| `POST`   | `/api/whitelist`           | Add `{"domain": "x.com"}` to whitelist       |
-| `DELETE` | `/api/whitelist/<domain>`  | Remove a domain from the whitelist           |
-| `GET`    | `/api/stats`               | Entry count per blacklist                    |
-| `POST`   | `/api/reload`              | Reload the Unbound service                   |
-| `POST`   | `/api/update`              | Start a full blacklist update (streams output) |
-| `GET`    | `/api/update/status`       | Poll update job status                       |
+---
+
+## parse.py reference
+
+`censorship/parse.py` converts official blacklist files to Unbound `always_nxdomain` format.
+
+```
+usage: parse.py -f FORMAT -i INPUT -o OUTPUT [-w WHITELIST]
+
+  -f plain    Plain-text: one entry per line (bare domain, hosts format, or URL)
+  -f cncpo    Semicolon-separated CSV: domain in column 2, first row is header
+
+  -i FILE     Input file
+  -o FILE     Output .conf file
+  -w FILE     Whitelist file (optional)
+```
+
+Example:
+
+```sh
+python3 censorship/parse.py \
+    -f cncpo \
+    -i /path/to/cncpo.csv \
+    -o /usr/local/etc/unbound/blacklists.d/CNCPO.conf \
+    -w /etc/unbound/blacklists/whitelist.txt
+```
+
+---
+
+## API reference
+
+All endpoints require authentication.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/search?domain=x.com` | Search a domain across all blacklists |
+| `GET` | `/api/manual` | List all manually-blocked domains |
+| `POST` | `/api/manual` | Add `{"domain": "x.com"}` to manual list |
+| `DELETE` | `/api/manual/<domain>` | Remove a domain from the manual list |
+| `GET` | `/api/whitelist` | List all whitelisted domains |
+| `POST` | `/api/whitelist` | Add `{"domain": "x.com"}` to whitelist |
+| `DELETE` | `/api/whitelist/<domain>` | Remove a domain from the whitelist |
+| `GET` | `/api/stats` | Entry count per blacklist (cached 5 min) |
+| `POST` | `/api/reload` | Reload the Unbound service |
+| `POST` | `/api/update` | Start a full blacklist update (streams output) |
+| `GET` | `/api/update/status` | Poll update job status |
