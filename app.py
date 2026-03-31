@@ -142,9 +142,14 @@ def _send_reset_email(to_email: str, token: str) -> None:
 
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-USERS_FILE      = Path(os.environ.get("USERS_FILE", APP_DIR / "users.json"))
-AUDIT_LOG       = Path(os.environ.get("AUDIT_LOG", "/var/log/dns_gui_audit.log"))
-ROOT_DIR        = Path(os.environ.get("CENSORSHIP_ROOT", "/root/censorship"))
+USERS_FILE   = Path(os.environ.get("USERS_FILE", APP_DIR / "users.json"))
+AUDIT_LOG    = Path(os.environ.get("AUDIT_LOG", "/var/log/dns_gui_audit.log"))
+BL_DIR       = Path(os.environ.get("BL_DIR", "/etc/unbound/blacklists"))
+MANUAL_LIST  = Path(os.environ.get("MANUAL_LIST", str(BL_DIR / "manual.txt")))
+WHITELIST    = Path(os.environ.get("WHITELIST",   str(BL_DIR / "whitelist.txt")))
+# Optional shell commands (leave empty to disable the feature)
+APPLY_CMD    = os.environ.get("APPLY_CMD", "")   # run after manual/whitelist changes
+UPDATE_CMD   = os.environ.get("UPDATE_CMD", "")  # run for full blacklist update
 
 # ── SMTP ──────────────────────────────────────────────────────────────────────
 SMTP_HOST     = os.environ.get("SMTP_HOST", "")
@@ -157,52 +162,38 @@ SMTP_TLS      = os.environ.get("SMTP_TLS", "true").lower() not in ("false", "0",
 # ── Reset token store (in-memory, scadenza 1 ora) ─────────────────────────────
 _reset_tokens: dict[str, dict] = {}   # token → {"username": str, "expires": datetime}
 _tokens_lock  = threading.Lock()
-TMP_DIR         = ROOT_DIR / "tmp"
-MANUAL_LIST     = TMP_DIR / "blacklist_manual.txt"
-WHITELIST       = ROOT_DIR / "whitelist.txt"
-UPDATE_MANUAL   = ROOT_DIR / "update_manual.sh"
-UPDATE_ALL      = ROOT_DIR / "update_blacklists.sh"
-BL_CONCAT       = ROOT_DIR / "BL_concat.sh"
-UNBOUND_SERVICE = os.environ.get("UNBOUND_SERVICE", "unbound")
+
+UNBOUND_SERVICE  = os.environ.get("UNBOUND_SERVICE", "unbound")
 UNBOUND_CONF_DIR = os.environ.get("UNBOUND_CONF_DIR", "/usr/local/etc/unbound/blacklists.d")
 
-# ── Blacklist catalogue ────────────────────────────────────────────────────────
-BLACKLISTS = {
-    # Ufficiali / legali
-    "CNCPO":        TMP_DIR / "blacklist_cncpo.csv",
-    "AAMS":         TMP_DIR / "blacklist_aams.txt",
-    "ADMT":         TMP_DIR / "blacklist_admt.txt",
-    "AGCOM":        TMP_DIR / "blacklist_agcom.txt",
-    "CONSOB":       TMP_DIR / "blacklist_consob.txt",
-    "IVASS":        TMP_DIR / "blacklist_ivass.txt",
-    "CERT-AGID":    TMP_DIR / "blacklist_cert_agid.txt",
-    # Community (file .conf generati)
-    "abuse":        TMP_DIR / "BL_abuse.conf",
-    "ads":          TMP_DIR / "BL_ads.conf",
-    "crypto":       TMP_DIR / "BL_crypto.conf",
-    "drugs":        TMP_DIR / "BL_drugs.conf",
-    "fakenews":     TMP_DIR / "BL_fakenews.conf",
-    "fraud":        TMP_DIR / "BL_fraud.conf",
-    "gambling":     TMP_DIR / "BL_gambling.conf",
-    "malware":      TMP_DIR / "BL_malware.conf",
-    "phishing":     TMP_DIR / "BL_phishing.conf",
-    "piracy":       TMP_DIR / "BL_piracy.conf",
-    "piracyshield": TMP_DIR / "BL_ps.conf",
-    "porn":         TMP_DIR / "BL_porn.conf",
-    "ransomware":   TMP_DIR / "BL_ransomware.conf",
-    "redirect":     TMP_DIR / "BL_redirect.conf",
-    "scam":         TMP_DIR / "BL_scam.conf",
-    "smart-tv":     TMP_DIR / "BL_smart-tv.conf",
-    "tiktok":       TMP_DIR / "BL_tiktok.conf",
-    "torrent":      TMP_DIR / "BL_torrent.conf",
-    "tracking":     TMP_DIR / "BL_tracking.conf",
-    "urlhaus":      TMP_DIR / "BL_urlhaus.conf",
-    "vaping":       TMP_DIR / "BL_vaping.conf",
-    # Manuale (modificabile via GUI)
-    "manual":       MANUAL_LIST,
-}
 
-OFFICIAL = {"CNCPO", "AAMS", "ADMT", "AGCOM", "CONSOB", "IVASS", "CERT-AGID"}
+def _get_blacklists() -> dict[str, Path]:
+    """Auto-discover blacklist files in BL_DIR at runtime.
+
+    Supported formats (detected by extension):
+      .conf  — Unbound local-zone format  (local-zone: domain always_nxdomain)
+      .txt   — plain domain list or hosts format  (0.0.0.0 domain)
+      .csv   — semicolon-separated list where domain follows a ';'
+    Files named like MANUAL_LIST or WHITELIST are excluded automatically.
+    """
+    lists: dict[str, Path] = {}
+    if BL_DIR.exists():
+        try:
+            manual_r = MANUAL_LIST.resolve()
+            white_r  = WHITELIST.resolve()
+        except Exception:
+            manual_r = white_r = None
+        for f in sorted(BL_DIR.iterdir()):
+            if not f.is_file() or f.suffix not in (".conf", ".txt", ".csv"):
+                continue
+            try:
+                if f.resolve() in (manual_r, white_r):
+                    continue
+            except Exception:
+                pass
+            lists[f.stem] = f
+    lists["manual"] = MANUAL_LIST
+    return lists
 
 # ── Stats cache ────────────────────────────────────────────────────────────────
 _stats_cache: dict = {}
@@ -309,7 +300,7 @@ def _compute_stats_bg():
     global _stats_cache, _stats_cache_ts, _stats_building
     stats = {}
     with ThreadPoolExecutor(max_workers=8) as ex:
-        futs = {ex.submit(_count_file, path): name for name, path in BLACKLISTS.items()}
+        futs = {ex.submit(_count_file, path): name for name, path in _get_blacklists().items()}
         for fut in as_completed(futs):
             stats[futs[fut]] = fut.result()
     _stats_cache = stats
@@ -425,7 +416,7 @@ def api_search():
 
     found_in = []
     with ThreadPoolExecutor(max_workers=8) as ex:
-        futs = {ex.submit(_grep_file, n, p, domain): n for n, p in BLACKLISTS.items()}
+        futs = {ex.submit(_grep_file, n, p, domain): n for n, p in _get_blacklists().items()}
         for fut in as_completed(futs):
             result = fut.result()
             if result:
@@ -566,12 +557,17 @@ def api_stats():
 
 
 def _run_update_bg():
-    """Esegue update_blacklists.sh in background e registra l'output riga per riga."""
+    """Esegue UPDATE_CMD in background e registra l'output riga per riga."""
     global _update_job
+    if not UPDATE_CMD:
+        with _update_lock:
+            _update_job.update({"status": "error", "ended": time.strftime("%H:%M:%S"),
+                                "output": "UPDATE_CMD not configured."})
+        return
     env = _env()
     try:
         proc = subprocess.Popen(
-            ["sh", str(UPDATE_ALL)],
+            UPDATE_CMD, shell=True,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, env=env
         )
@@ -618,27 +614,30 @@ def api_update_status():
 
 
 
+def _apply_changes() -> tuple[int, str]:
+    """Run APPLY_CMD after a manual list or whitelist change. No-op if not configured."""
+    if not APPLY_CMD:
+        return 0, ""
+    try:
+        r = subprocess.run(
+            APPLY_CMD, shell=True, capture_output=True, text=True,
+            timeout=300, env=_env()
+        )
+        out = (r.stdout + r.stderr).strip()
+        if r.returncode != 0:
+            app.logger.error("APPLY_CMD failed (rc=%d): %s", r.returncode, out)
+        return r.returncode, out
+    except Exception as exc:
+        app.logger.error("APPLY_CMD exception: %s", exc)
+        return 1, str(exc)
+
+
 def _apply_whitelist() -> tuple[int, str]:
-    """Dopo modifica whitelist: rigenera manual conf + BL_all.conf."""
-    rc, out = _run(["sh", str(UPDATE_MANUAL)], timeout=120)
-    if rc != 0:
-        app.logger.error("update_manual.sh failed (rc=%d): %s", rc, out)
-        return rc, out
-    rc2, out2 = _run(["sh", str(BL_CONCAT)], timeout=300)
-    if rc2 != 0:
-        app.logger.error("BL_concat.sh failed (rc=%d): %s", rc2, out2)
-    return rc2, (out + "\n" + out2).strip()
+    return _apply_changes()
 
 
 def _apply_manual() -> tuple[int, str]:
-    rc, out = _run(["sh", str(UPDATE_MANUAL)], timeout=120)
-    if rc != 0:
-        app.logger.error("update_manual.sh failed (rc=%d): %s", rc, out)
-        return rc, out
-    rc2, out2 = _run(["sh", str(BL_CONCAT)], timeout=300)
-    if rc2 != 0:
-        app.logger.error("BL_concat.sh failed (rc=%d): %s", rc2, out2)
-    return rc2, (out + "\n" + out2).strip()
+    return _apply_changes()
 
 
 if __name__ == "__main__":

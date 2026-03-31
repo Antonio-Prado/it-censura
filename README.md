@@ -1,77 +1,116 @@
 # DNS Blacklist Manager
 
-Web GUI per la gestione delle blacklist DNS (Unbound + censorship) su FreeBSD.
+Web GUI for managing DNS blacklists on [Unbound](https://nlnetlabs.nl/projects/unbound/) — designed for ISPs and network operators that need to apply DNS-based filtering policies.
 
-## Requisiti
+## Features
 
-```sh
-pkg install py311-flask
-# oppure
-pip install flask
-```
+- **Domain search** — search across all blacklists in parallel (fast, grep-based)
+- **Manual blacklist** — add/remove domains via the web UI
+- **Whitelist** — domains excluded from blocking regardless of other lists
+- **Statistics** — entry count per list, cached and refreshed in background
+- **Blacklist update** — trigger an external update script and stream its output live
+- **Unbound reload** — reload the DNS service after changes
+- **User management** — session-based login, multiple users, hashed passwords
+- **Audit log** — every write action and login/logout is logged
 
-## Installazione
-
-1. Copia i file sul server nella directory desiderata (es. `/root/dns-gui/`):
-
-```sh
-scp -r app.py templates/ root@server:/root/dns-gui/
-```
-
-2. Assicurati che `censorship` sia installato in `/root/censorship/` (percorso di default).
-
-## Avvio
+## Requirements
 
 ```sh
-# Avvio semplice (porta 5000)
-python3 app.py
+# FreeBSD
+pkg install py311-flask py311-flask-login
 
-# Con porta e root censorship personalizzate
-CENSORSHIP_ROOT=/root/censorship PORT=8080 python3 app.py
+# Linux / generic
+pip install flask flask-login werkzeug
 ```
 
-## Variabili d'ambiente
+## Blacklist directory layout
 
-| Variabile          | Default              | Descrizione                          |
-|--------------------|----------------------|--------------------------------------|
-| `CENSORSHIP_ROOT`  | `/root/censorship`   | Directory installazione censorship   |
-| `PORT`             | `5000`               | Porta HTTP della GUI                 |
-| `UNBOUND_SERVICE`  | `unbound`            | Nome servizio rc FreeBSD             |
+The GUI auto-discovers all blacklist files in `BL_DIR`. Three file formats are supported:
 
-## Avvio automatico con rc.d (FreeBSD)
+| Extension | Format | Match pattern |
+|-----------|--------|---------------|
+| `.conf`   | Unbound `local-zone` | `local-zone: domain always_nxdomain` |
+| `.txt`    | Plain domain list or hosts file | `domain` or `0.0.0.0 domain` |
+| `.csv`    | Semicolon-separated | domain follows a `;` on each row |
 
-Crea `/usr/local/etc/rc.d/dns-gui`:
+Two special files are managed by the GUI:
+
+- **`MANUAL_LIST`** — domains added manually via the UI (default: `BL_DIR/manual.txt`)
+- **`WHITELIST`** — domains excluded from blocking (default: `BL_DIR/whitelist.txt`)
+
+## Configuration (environment variables)
+
+| Variable          | Default                          | Description                                     |
+|-------------------|----------------------------------|-------------------------------------------------|
+| `BL_DIR`          | `/etc/unbound/blacklists`        | Directory containing all blacklist files        |
+| `MANUAL_LIST`     | `$BL_DIR/manual.txt`             | Path to the manually-managed blacklist          |
+| `WHITELIST`       | `$BL_DIR/whitelist.txt`          | Path to the whitelist                           |
+| `APPLY_CMD`       | *(empty)*                        | Shell command to run after manual/whitelist changes (e.g. reload Unbound config) |
+| `UPDATE_CMD`      | *(empty)*                        | Shell command to run for a full blacklist update |
+| `UNBOUND_SERVICE` | `unbound`                        | Service name for `service <name> reload`        |
+| `UNBOUND_CONF_DIR`| `/usr/local/etc/unbound/blacklists.d` | Unbound include directory               |
+| `PORT`            | `5000`                           | HTTP port                                       |
+| `USERS_FILE`      | `<app_dir>/users.json`           | User credentials file                           |
+| `AUDIT_LOG`       | `/var/log/dns_gui_audit.log`     | Audit log path                                  |
+| `SECRET_KEY`      | *(auto-generated)*               | Flask session key                               |
+| `SMTP_HOST`       | *(empty)*                        | SMTP server for password reset emails           |
+| `SMTP_PORT`       | `587`                            |                                                 |
+| `SMTP_USER`       | *(empty)*                        |                                                 |
+| `SMTP_PASSWORD`   | *(empty)*                        |                                                 |
+| `SMTP_FROM`       | `$SMTP_USER`                     |                                                 |
+| `SMTP_TLS`        | `true`                           | Enable STARTTLS                                 |
+
+## Quick start
 
 ```sh
-#!/bin/sh
-# PROVIDE: dns_gui
-# REQUIRE: NETWORKING unbound
-# KEYWORD: shutdown
+# 1. Create the blacklist directory and add your lists
+mkdir -p /etc/unbound/blacklists
+# copy or symlink your .conf / .txt / .csv blacklist files here
 
-. /etc/rc.subr
-name="dns_gui"
-rcvar="dns_gui_enable"
-command="/usr/local/bin/python3"
-command_args="/root/dns-gui/app.py"
-pidfile="/var/run/dns_gui.pid"
-load_rc_config $name
-run_rc_command "$1"
+# 2. Create the first user
+python3 manage_users.py add admin
+
+# 3. Start the GUI
+BL_DIR=/etc/unbound/blacklists \
+  APPLY_CMD="service unbound reload" \
+  UPDATE_CMD="sh /opt/blacklists/update.sh" \
+  python3 app.py
 ```
 
-Poi:
+## Automatic startup (FreeBSD rc.d)
+
+Copy `rc.d/dns-gui` to `/usr/local/etc/rc.d/dns-gui`, then:
+
 ```sh
 chmod +x /usr/local/etc/rc.d/dns-gui
-echo 'dns_gui_enable="YES"' >> /etc/rc.conf
+sysrc dns_gui_enable="YES"
+sysrc dns_gui_bl_dir="/etc/unbound/blacklists"
+sysrc dns_gui_apply_cmd="service unbound reload"
 service dns-gui start
+```
+
+## User management
+
+```sh
+python3 manage_users.py add <username>      # add user (prompts for password)
+python3 manage_users.py passwd <username>   # change password
+python3 manage_users.py list                # list users
+python3 manage_users.py disable <username>  # disable login
+python3 manage_users.py delete <username>   # remove user
 ```
 
 ## API
 
-| Metodo   | Endpoint                   | Descrizione                                      |
-|----------|----------------------------|--------------------------------------------------|
-| `GET`    | `/api/search?domain=x.com` | Cerca un dominio in tutte le blacklist           |
-| `GET`    | `/api/manual`              | Elenca tutti i domini nella blacklist manuale    |
-| `POST`   | `/api/manual`              | Aggiunge `{"domain": "x.com"}` alla manuale     |
-| `DELETE` | `/api/manual/<domain>`     | Rimuove un dominio dalla manuale                 |
-| `GET`    | `/api/stats`               | Numero di voci per ogni blacklist                |
-| `POST`   | `/api/reload`              | Ricarica il servizio Unbound                     |
+| Method   | Endpoint                   | Description                                  |
+|----------|----------------------------|----------------------------------------------|
+| `GET`    | `/api/search?domain=x.com` | Search a domain across all blacklists        |
+| `GET`    | `/api/manual`              | List all manually-blocked domains            |
+| `POST`   | `/api/manual`              | Add `{"domain": "x.com"}` to manual list     |
+| `DELETE` | `/api/manual/<domain>`     | Remove a domain from the manual list         |
+| `GET`    | `/api/whitelist`           | List all whitelisted domains                 |
+| `POST`   | `/api/whitelist`           | Add `{"domain": "x.com"}` to whitelist       |
+| `DELETE` | `/api/whitelist/<domain>`  | Remove a domain from the whitelist           |
+| `GET`    | `/api/stats`               | Entry count per blacklist                    |
+| `POST`   | `/api/reload`              | Reload the Unbound service                   |
+| `POST`   | `/api/update`              | Start a full blacklist update (streams output) |
+| `GET`    | `/api/update/status`       | Poll update job status                       |

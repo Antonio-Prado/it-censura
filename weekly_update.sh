@@ -1,30 +1,27 @@
 #!/bin/sh
-# Wrapper cron settimanale: aggiorna le blacklist
-# Sostituisce la voce cron diretta a update_blacklists.sh
+# Weekly blacklist update script — adapt UPDATE_CMD to your environment
+# Example cron entry: 0 3 * * 0 /path/to/weekly_update.sh
 
-CENSORSHIP_ROOT="${CENSORSHIP_ROOT:-/root/censorship}"
-LOGFILE="/var/log/censorship_update.log"
+LOGFILE="/var/log/dns_gui_update.log"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "${LOGFILE}"; }
 
-log "=== Avvio aggiornamento settimanale blacklist ==="
+log "=== Blacklist update started ==="
 
-log "--- update_blacklists.sh ---"
-sh "${CENSORSHIP_ROOT}/update_blacklists.sh" >> "${LOGFILE}" 2>&1
-rc=$?
-if [ ${rc} -ne 0 ]; then
-    log "ATTENZIONE: update_blacklists.sh terminato con codice ${rc}"
-else
-    log "update_blacklists.sh completato."
+# Set UPDATE_CMD to the command that fetches/regenerates your blacklists, e.g.:
+#   UPDATE_CMD="sh /opt/blacklists/update.sh"
+if [ -z "${UPDATE_CMD}" ]; then
+    log "ERROR: UPDATE_CMD is not set. Edit this script or set the env var."
+    exit 1
 fi
 
-log "--- BL_concat.sh ---"
-sh "${CENSORSHIP_ROOT}/BL_concat.sh" >> "${LOGFILE}" 2>&1
+eval "${UPDATE_CMD}" >> "${LOGFILE}" 2>&1
 rc=$?
 if [ ${rc} -ne 0 ]; then
-    log "ATTENZIONE: BL_concat.sh terminato con codice ${rc}"
+    log "ERROR: UPDATE_CMD exited with code ${rc}"
 else
-    log "BL_concat.sh completato."
+    log "Update completed."
 fi
 
-log "=== Fine aggiornamento settimanale ==="
+log "=== Blacklist update finished ==="
+exit ${rc}

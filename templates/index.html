@@ -364,7 +364,7 @@
 <div id="toast"></div>
 
 <script>
-const OFFICIAL = new Set(["CNCPO","AAMS","ADMT","AGCOM","CONSOB","CERT-AGID","IVASS"]);
+const OFFICIAL = new Set(); // populate via BL_OFFICIAL env var if needed
 let lastSearched = null;
 
 // ── Utilities ────────────────────────────────────────────────────────────────
