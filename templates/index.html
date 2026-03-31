@@ -325,21 +325,6 @@
       <pre id="update-log" style="display:none;margin-top:.9rem;background:var(--bg);border:1px solid var(--border);padding:.7rem;border-radius:5px;font-size:.72rem;color:var(--muted);max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;"></pre>
     </div>
 
-    <!-- Sync card -->
-    <div class="card" id="sync-card" style="display:none;">
-      <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
-        <span>Sincronizzazione ns2</span>
-        <span id="sync-host-badge" style="font-size:.75rem;color:var(--muted);font-family:monospace;"></span>
-      </div>
-      <p style="font-size:.85rem;color:var(--muted);margin-bottom:.8rem;">
-        Copia le configurazioni Unbound su ns2 e ricarica il servizio remoto.
-      </p>
-      <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
-        <button class="btn-neutral" id="btn-sync" onclick="syncNs2()">Sincronizza ns2</button>
-        <span id="sync-status" style="font-size:.8rem;color:var(--muted);"></span>
-      </div>
-      <pre id="sync-out" style="display:none;margin-top:.8rem;background:var(--bg);border:1px solid var(--border);padding:.7rem;border-radius:5px;font-size:.72rem;color:var(--muted);overflow-x:auto;white-space:pre-wrap;"></pre>
-    </div>
 
   </div>
 
@@ -773,44 +758,6 @@ async function pollUpdate() {
   }
 })();
 
-// ── Sync ns2 ──────────────────────────────────────────────────────────────────
-async function syncNs2() {
-  const btn    = document.getElementById("btn-sync");
-  const status = document.getElementById("sync-status");
-  const outEl  = document.getElementById("sync-out");
-
-  btn.disabled = true;
-  btn.innerHTML = `<span class="spinner" style="width:13px;height:13px;border-width:2px;margin:0"></span>`;
-  status.textContent = "Sincronizzazione in corso…";
-  outEl.style.display = "none";
-
-  const [s, data] = await api("POST", "/api/sync");
-  btn.disabled = false;
-  btn.textContent = "Sincronizza ns2";
-
-  if (s !== 200) {
-    status.innerHTML = `<span style="color:var(--danger)">✗ Fallita</span>`;
-    outEl.textContent = data.error || "Errore sconosciuto";
-    outEl.style.display = "block";
-    toast("Sincronizzazione fallita", "err");
-    return;
-  }
-  status.innerHTML = `<span style="color:var(--success)">✓ Completata</span>`;
-  if (data.output) { outEl.textContent = data.output; outEl.style.display = "block"; }
-  toast("ns2 sincronizzato");
-}
-
-// Mostra il pannello sync solo se NS2_HOST è configurato
-(async () => {
-  const [, data] = await api("GET", "/api/sync/status");
-  if (data.configured) {
-    document.getElementById("sync-card").style.display = "block";
-    const badge = document.getElementById("sync-host-badge");
-    badge.textContent = data.host;
-    badge.style.color = data.reachable ? "var(--success)" : "var(--danger)";
-    badge.title = data.reachable ? "raggiungibile" : "non raggiungibile";
-  }
-})();
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadManual();

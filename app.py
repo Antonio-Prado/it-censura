@@ -165,10 +165,6 @@ UPDATE_ALL      = ROOT_DIR / "update_blacklists.sh"
 BL_CONCAT       = ROOT_DIR / "BL_concat.sh"
 UNBOUND_SERVICE = os.environ.get("UNBOUND_SERVICE", "unbound")
 UNBOUND_CONF_DIR = os.environ.get("UNBOUND_CONF_DIR", "/usr/local/etc/unbound/blacklists.d")
-NS2_HOST        = os.environ.get("NS2_HOST", "")
-NS2_SSH_KEY     = os.environ.get("NS2_SSH_KEY", "")
-NS2_SSH_PORT    = os.environ.get("NS2_SSH_PORT", "22")
-NS2_SSH_USER    = os.environ.get("NS2_SSH_USER", "unbound-sync")
 
 # ── Blacklist catalogue ────────────────────────────────────────────────────────
 BLACKLISTS = {
@@ -620,66 +616,6 @@ def api_update_status():
     with _update_lock:
         return jsonify(dict(_update_job))
 
-
-@app.route("/api/sync", methods=["POST"])
-@login_required
-def api_sync():
-    if not NS2_HOST:
-        return jsonify({"error": "NS2_HOST non configurato. Aggiungi NS2_HOST in /etc/rc.conf."}), 400
-
-    ssh_opts = [
-        "-p", NS2_SSH_PORT,
-        "-o", "StrictHostKeyChecking=accept-new",
-        "-o", "BatchMode=yes",
-    ]
-    if NS2_SSH_KEY:
-        ssh_opts += ["-i", NS2_SSH_KEY]
-
-    remote = f"{NS2_SSH_USER}@{NS2_HOST}"
-
-    # 1. rsync la directory conf di Unbound su ns2
-    # usa sudo rsync sul lato remoto per scrivere in directory di root
-    rsync_e = "ssh " + " ".join(ssh_opts)
-    rsync_cmd = [
-        "rsync", "-az", "--delete",
-        "--rsync-path", "sudo rsync",
-        "-e", rsync_e,
-        UNBOUND_CONF_DIR + "/",
-        f"{remote}:{UNBOUND_CONF_DIR}/",
-    ]
-    rc, out = _run(rsync_cmd, timeout=120)
-    if rc != 0:
-        return jsonify({"error": f"rsync fallito: {out}"}), 500
-
-    # 2. Ricarica Unbound su ns2 via SSH
-    rc2, out2 = _run(
-        ["ssh"] + ssh_opts + [remote, "sudo", "service", UNBOUND_SERVICE, "reload"],
-        timeout=30
-    )
-    full_out = (out + "\n" + out2).strip()
-    if rc2 != 0:
-        return jsonify({"error": f"rsync OK, reload ns2 fallito: {out2}", "output": full_out}), 500
-
-    _audit("sync_ns2")
-    return jsonify({"ok": True, "output": full_out or "Sincronizzazione completata."})
-
-
-@app.route("/api/sync/status")
-@login_required
-def api_sync_status():
-    """Ritorna se NS2 è configurato e raggiungibile."""
-    if not NS2_HOST:
-        return jsonify({"configured": False})
-    ssh_opts = [
-        "-p", NS2_SSH_PORT,
-        "-o", "StrictHostKeyChecking=accept-new",
-        "-o", "BatchMode=yes",
-        "-o", "ConnectTimeout=5",
-    ]
-    if NS2_SSH_KEY:
-        ssh_opts += ["-i", NS2_SSH_KEY]
-    rc, _ = _run(["ssh"] + ssh_opts + [f"{NS2_SSH_USER}@{NS2_HOST}", "true"], timeout=10)
-    return jsonify({"configured": True, "host": NS2_HOST, "reachable": rc == 0})
 
 
 def _apply_whitelist() -> tuple[int, str]:
