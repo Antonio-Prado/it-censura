@@ -1,19 +1,22 @@
 # DNS Blacklist Manager
 
-Web GUI for managing DNS blacklists on [Unbound](https://nlnetlabs.nl/projects/unbound/).  
-Designed for ISPs and network operators that need to apply DNS-based filtering policies.
+Software per la gestione della censura DNS di Stato da parte di ISP e operatori di rete italiani.
 
-## Overview
+Automatizza il download e la conversione delle blacklist ufficiali imposte dalle autorità italiane
+(CNCPO, ADM, AGCOM, CONSOB, IVASS), le integra nel resolver [Unbound](https://nlnetlabs.nl/projects/unbound/)
+e mette a disposizione un'interfaccia web per la ricerca, il monitoraggio e la gestione manuale dei domini bloccati.
 
-The project consists of two independent components:
+## Componenti
 
-| Component | Path | Purpose |
-|-----------|------|---------|
-| **Web GUI** | `app.py` + `templates/` | Browser interface to search, manage and monitor blacklists |
-| **Update scripts** | `censorship/` | Download and convert official blacklists to Unbound format |
+Il progetto è composto da due componenti indipendenti:
 
-The two components are loosely coupled via the filesystem: the update scripts write
-`.conf` files to a directory that Unbound loads, and the GUI reads those same files.
+| Componente | Percorso | Funzione |
+|------------|----------|----------|
+| **Script di aggiornamento** | `censorship/` | Scaricano e convertono le blacklist ufficiali in formato Unbound |
+| **Interfaccia web** | `app.py` + `templates/` | Permette di ricercare domini, gestire la lista manuale e monitorare le liste attive |
+
+I due componenti comunicano tramite filesystem: gli script scrivono i file `.conf` che Unbound carica,
+e l'interfaccia web legge quegli stessi file.
 
 ---
 
