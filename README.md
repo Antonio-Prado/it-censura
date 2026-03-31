@@ -47,6 +47,7 @@ Two special files are managed by the GUI:
 | `WHITELIST`       | `$BL_DIR/whitelist.txt`          | Path to the whitelist                           |
 | `APPLY_CMD`       | *(empty)*                        | Shell command to run after manual/whitelist changes (e.g. reload Unbound config) |
 | `UPDATE_CMD`      | *(empty)*                        | Shell command to run for a full blacklist update |
+| `OFFICIAL_LISTS`  | `AAMS,ADMT,CNCPO,AGCOM,CONSOB,IVASS` | Comma-separated list stems shown with the "official" badge. Defaults to Italian regulatory lists (ADM gambling/tobacco, CNCPO, AGCOM, CONSOB, IVASS). Set to empty string to disable the badge. |
 | `UNBOUND_SERVICE` | `unbound`                        | Service name for `service <name> reload`        |
 | `UNBOUND_CONF_DIR`| `/usr/local/etc/unbound/blacklists.d` | Unbound include directory               |
 | `PORT`            | `5000`                           | HTTP port                                       |

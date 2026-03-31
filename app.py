@@ -166,6 +166,16 @@ _tokens_lock  = threading.Lock()
 UNBOUND_SERVICE  = os.environ.get("UNBOUND_SERVICE", "unbound")
 UNBOUND_CONF_DIR = os.environ.get("UNBOUND_CONF_DIR", "/usr/local/etc/unbound/blacklists.d")
 
+# Official/mandatory lists — shown with a distinct badge in the UI.
+# Defaults to Italian regulatory lists; override with OFFICIAL_LISTS env var
+# (comma-separated list stems matching your filenames, e.g. "AGCOM,CNCPO,CONSOB").
+_ITALIAN_OFFICIAL = "AAMS,ADMT,CNCPO,AGCOM,CONSOB,IVASS"
+OFFICIAL_LISTS = sorted(
+    s.strip() for s in
+    os.environ.get("OFFICIAL_LISTS", _ITALIAN_OFFICIAL).split(",")
+    if s.strip()
+)
+
 
 def _get_blacklists() -> dict[str, Path]:
     """Auto-discover blacklist files in BL_DIR at runtime.
@@ -396,7 +406,7 @@ def reset_password(token):
 @app.route("/")
 @login_required
 def index():
-    return render_template("index.html")
+    return render_template("index.html", official_lists=OFFICIAL_LISTS)
 
 
 @app.route("/help")

@@ -364,7 +364,7 @@
 <div id="toast"></div>
 
 <script>
-const OFFICIAL = new Set(); // populate via BL_OFFICIAL env var if needed
+const OFFICIAL = new Set({{ official_lists | tojson }});
 let lastSearched = null;
 
 // ── Utilities ────────────────────────────────────────────────────────────────
