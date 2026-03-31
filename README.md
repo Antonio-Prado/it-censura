@@ -1,7 +1,5 @@
 # DNS Blacklist Manager
 
-Sviluppato da **Antonio Prado**.
-
 Web GUI for managing DNS blacklists on [Unbound](https://nlnetlabs.nl/projects/unbound/).  
 Designed for ISPs and network operators that need to apply DNS-based filtering policies.
 
