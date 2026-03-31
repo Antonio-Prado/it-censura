@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Accesso — DNS Blacklist Manager</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:      #0f1117;
+    --surface: #1a1d27;
+    --border:  #2a2d3e;
+    --accent:  #4f8ef7;
+    --danger:  #e05252;
+    --text:    #d4d8e8;
+    --muted:   #6b7099;
+    --radius:  8px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 2rem 2.2rem;
+    width: 100%;
+    max-width: 360px;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    margin-bottom: 1.8rem;
+  }
+  .logo h1 { font-size: 1.05rem; font-weight: 600; color: #fff; line-height: 1.2; }
+  .logo small { color: var(--muted); font-size: .75rem; display: block; }
+
+  label {
+    display: block;
+    font-size: .78rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-bottom: .4rem;
+  }
+
+  input[type="text"], input[type="password"] {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: .95rem;
+    padding: .55rem .9rem;
+    outline: none;
+    font-family: monospace;
+    transition: border-color .2s;
+    margin-bottom: 1.1rem;
+  }
+  input:focus { border-color: var(--accent); }
+
+  button {
+    width: 100%;
+    cursor: pointer;
+    border: none;
+    border-radius: var(--radius);
+    font-size: .9rem;
+    font-weight: 600;
+    padding: .65rem 1rem;
+    background: var(--accent);
+    color: #fff;
+    transition: opacity .15s;
+    margin-top: .3rem;
+  }
+  button:hover { opacity: .85; }
+
+  .error {
+    background: rgba(224,82,82,.12);
+    border: 1px solid var(--danger);
+    border-radius: var(--radius);
+    color: var(--danger);
+    font-size: .85rem;
+    padding: .6rem .9rem;
+    margin-bottom: 1.1rem;
+  }
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="logo">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4f8ef7" stroke-width="1.8">
+      <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+      <path d="M2 17l10 5 10-5M2 12l10 5 10-5"/>
+    </svg>
+    <div>
+      <h1>DNS Blacklist Manager</h1>
+      <small>Unbound / censorship — FreeBSD</small>
+    </div>
+  </div>
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/login">
+    <label for="username">Utente</label>
+    <input type="text" id="username" name="username" autocomplete="username"
+           autofocus required>
+
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" autocomplete="current-password" required>
+
+    <button type="submit">Accedi</button>
+  </form>
+  <a href="/forgot" style="display:block;text-align:center;margin-top:1.1rem;
+     color:var(--muted);font-size:.82rem;text-decoration:none;">
+    Password dimenticata?
+  </a>
+</div>
+</body>
+</html>

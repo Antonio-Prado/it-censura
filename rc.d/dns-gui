@@ -1,0 +1,78 @@
+#!/bin/sh
+#
+# PROVIDE: dns_gui
+# REQUIRE: NETWORKING unbound
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="dns_gui"
+rcvar="dns_gui_enable"
+desc="DNS Blacklist Manager GUI"
+
+dns_gui_user="${dns_gui_user:-root}"
+dns_gui_port="${dns_gui_port:-8080}"
+dns_gui_root="${dns_gui_root:-/root/censorship}"
+dns_gui_dir="${dns_gui_dir:-/root/dns-gui}"
+dns_gui_python="${dns_gui_python:-/root/dns-gui/venv/bin/python3}"
+dns_gui_ns2_host="${dns_gui_ns2_host:-}"
+dns_gui_ns2_ssh_key="${dns_gui_ns2_ssh_key:-/root/.ssh/id_ns2}"
+dns_gui_ns2_ssh_port="${dns_gui_ns2_ssh_port:-22}"
+dns_gui_ns2_ssh_user="${dns_gui_ns2_ssh_user:-unbound-sync}"
+dns_gui_smtp_host="${dns_gui_smtp_host:-}"
+dns_gui_smtp_port="${dns_gui_smtp_port:-587}"
+dns_gui_smtp_user="${dns_gui_smtp_user:-}"
+dns_gui_smtp_password="${dns_gui_smtp_password:-}"
+dns_gui_smtp_from="${dns_gui_smtp_from:-}"
+dns_gui_smtp_tls="${dns_gui_smtp_tls:-true}"
+
+command="${dns_gui_python}"
+command_args="${dns_gui_dir}/app.py"
+pidfile="/var/run/${name}.pid"
+logfile="/var/log/${name}.log"
+
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+
+dns_gui_start()
+{
+    echo "Starting ${desc}."
+    export CENSORSHIP_ROOT="${dns_gui_root}"
+    export PORT="${dns_gui_port}"
+    export NS2_HOST="${dns_gui_ns2_host}"
+    export NS2_SSH_KEY="${dns_gui_ns2_ssh_key}"
+    export NS2_SSH_PORT="${dns_gui_ns2_ssh_port}"
+    export NS2_SSH_USER="${dns_gui_ns2_ssh_user}"
+    export SMTP_HOST="${dns_gui_smtp_host}"
+    export SMTP_PORT="${dns_gui_smtp_port}"
+    export SMTP_USER="${dns_gui_smtp_user}"
+    export SMTP_PASSWORD="${dns_gui_smtp_password}"
+    export SMTP_FROM="${dns_gui_smtp_from}"
+    export SMTP_TLS="${dns_gui_smtp_tls}"
+    /usr/sbin/daemon -f -p "${pidfile}" -o "${logfile}" \
+        ${command} ${command_args}
+}
+
+dns_gui_stop()
+{
+    if [ -f "${pidfile}" ]; then
+        echo "Stopping ${desc}."
+        kill "$(cat ${pidfile})" 2>/dev/null
+        rm -f "${pidfile}"
+    else
+        echo "${desc} is not running."
+    fi
+}
+
+dns_gui_status()
+{
+    if [ -f "${pidfile}" ] && kill -0 "$(cat ${pidfile})" 2>/dev/null; then
+        echo "${desc} is running as PID $(cat ${pidfile})."
+    else
+        echo "${desc} is not running."
+    fi
+}
+
+load_rc_config $name
+run_rc_command "$1"

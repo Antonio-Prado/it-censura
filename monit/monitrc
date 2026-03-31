@@ -1,0 +1,36 @@
+###############################################################################
+# monit - health check per Unbound DNS ricorsivo
+###############################################################################
+
+# Intervallo di controllo (secondi)
+set daemon 60
+
+# Log
+set log /var/log/monit.log
+
+# Interfaccia web locale (opzionale — solo su localhost)
+set httpd port 2812 and
+    use address 127.0.0.1
+    allow localhost
+
+###############################################################################
+# Controllo processo Unbound
+#
+# 1. Verifica che il processo sia in esecuzione tramite pidfile
+# 2. Testa la risoluzione DNS su 127.0.0.1:53/UDP
+# 3. Se il test fallisce: riavvia il servizio
+# 4. Se fallisce 3 volte in 5 cicli: logga un alert
+###############################################################################
+
+check process unbound with pidfile /var/run/unbound.pid
+    start program = "/usr/sbin/service unbound start"
+    stop  program = "/usr/sbin/service unbound stop"
+    if failed host 127.0.0.1 port 53 type udp protocol dns then restart
+    if 3 restarts within 5 cycles then alert
+
+###############################################################################
+# (Opzionale) Controllo spazio disco — evita che i log riempiano il disco
+###############################################################################
+
+check filesystem rootfs with path /
+    if space usage > 90% then alert
