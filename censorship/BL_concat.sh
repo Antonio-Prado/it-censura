@@ -1,32 +1,35 @@
 #!/bin/sh
-# BL_concat.sh — Merge official and community blacklists into a single
-# BL_all.conf, deduplicating entries and applying the whitelist.
+# BL_concat.sh — Unisce le blacklist ufficiali e quelle community in un unico
+# file .conf, deduplicando le voci e applicando la whitelist.
 #
-# Use this script if you run community lists (BL_*.conf) alongside the
-# official ones.  It removes from community lists any domain already
-# covered by an official list or by the whitelist.
+# Usare questo script se si affiancano liste community alle liste ufficiali.
+# Rimuove dalle liste community qualsiasi dominio già coperto dalle liste
+# ufficiali o dalla whitelist.
 #
-# Configuration via environment variables:
-#   BL_DIR    Directory containing community BL_*.conf files
-#             (default: /etc/unbound/blacklists)
-#   CONF_DIR  Unbound include directory; official *.conf files live here
-#             and BL_all.conf is written here
-#             (default: /usr/local/etc/unbound/blacklists.d)
-#   WHITELIST Whitelist file  (default: $BL_DIR/whitelist.txt)
+# Variabili d'ambiente:
+#   BL_DIR           Directory contenente i file community (default: /etc/unbound/blacklists)
+#   CONF_DIR         Directory include di Unbound, dove risiedono i .conf ufficiali
+#                    (default: /usr/local/etc/unbound/blacklists.d)
+#   WHITELIST        File whitelist (default: $BL_DIR/whitelist.txt)
+#   OUT_FILE         File di output (default: $CONF_DIR/merged.conf)
+#   COMMUNITY_GLOB   Pattern dei file community in BL_DIR (default: BL_*.conf)
 
 BL_DIR="${BL_DIR:-/etc/unbound/blacklists}"
 CONF_DIR="${CONF_DIR:-/usr/local/etc/unbound/blacklists.d}"
 WHITELIST="${WHITELIST:-${BL_DIR}/whitelist.txt}"
-OUT="${CONF_DIR}/BL_all.conf"
+OUT="${OUT_FILE:-${CONF_DIR}/merged.conf}"
+COMMUNITY_GLOB="${COMMUNITY_GLOB:-BL_*.conf}"
 
 TMP_EXCL=$(mktemp)
 TMP_COMM=$(mktemp)
 trap 'rm -f "${TMP_EXCL}" "${TMP_COMM}"' EXIT
 
-# Build exclusion set: domains from official conf files + whitelist
-awk '/^local-zone:/ {
-    dom = $2; gsub(/"/, "", dom); gsub(/\.$/, "", dom); print tolower(dom)
-}' "${CONF_DIR}"/*.conf 2>/dev/null | sort -u > "${TMP_EXCL}"
+# Costruisce l'insieme di esclusione: domini dai .conf ufficiali + whitelist.
+# Esclude il file di output (OUT) per evitare duplicati nelle esecuzioni successive.
+find "${CONF_DIR}" -maxdepth 1 -name '*.conf' ! -path "${OUT}" -print \
+    | xargs awk '/^local-zone:/ {
+        dom = $2; gsub(/"/, "", dom); gsub(/\.$/, "", dom); print tolower(dom)
+    }' 2>/dev/null | sort -u > "${TMP_EXCL}"
 
 if [ -f "${WHITELIST}" ] && [ -s "${WHITELIST}" ]; then
     grep -vE '^[[:space:]]*(#|$)' "${WHITELIST}" \
@@ -35,9 +38,9 @@ if [ -f "${WHITELIST}" ] && [ -s "${WHITELIST}" ]; then
     mv "${TMP_EXCL}.new" "${TMP_EXCL}"
 fi
 
-# Collect community entries, filtering malformed domains
-if ls "${BL_DIR}"/BL_*.conf 2>/dev/null | grep -q .; then
-    cat "${BL_DIR}"/BL_*.conf \
+# Raccoglie le voci community filtrando i domini malformati
+if ls "${BL_DIR}"/${COMMUNITY_GLOB} 2>/dev/null | grep -q .; then
+    cat "${BL_DIR}"/${COMMUNITY_GLOB} \
         | grep -vE '^local-zone: [^a-zA-Z0-9"*]' \
         | awk '{gsub(/\. /, " "); print tolower($0)}' \
         | sort | uniq \
@@ -46,10 +49,11 @@ else
     : > "${TMP_COMM}"
 fi
 
-# Write output: official entries first, then community minus exclusions
+# Scrive l'output: voci ufficiali prima, poi community meno le escluse
 {
     printf 'server:\n'
-    grep '^local-zone:' "${CONF_DIR}"/*.conf 2>/dev/null \
+    find "${CONF_DIR}" -maxdepth 1 -name '*.conf' ! -path "${OUT}" -print \
+        | xargs grep '^local-zone:' 2>/dev/null \
         | awk '{gsub(/\. /, " "); print tolower($0)}' \
         | sort -u
     awk 'NR==FNR { excl[$0]=1; next }
@@ -59,4 +63,4 @@ fi
          }' "${TMP_EXCL}" "${TMP_COMM}"
 } > "${OUT}"
 
-echo "BL_all.conf written to ${OUT}" >&2
+echo "File unificato scritto in: ${OUT}" >&2

@@ -243,14 +243,15 @@ e deduplicare tutto in un unico file `BL_all.conf`:
 ```sh
 BL_DIR=/etc/unbound/blacklists \
 CONF_DIR=/usr/local/etc/unbound/blacklists.d \
+OUT_FILE=/usr/local/etc/unbound/blacklists.d/merged.conf \
 sh censorship/BL_concat.sh
 ```
 
-In questo caso caricare esplicitamente `BL_all.conf` in `unbound.conf` invece del wildcard:
+In questo caso caricare esplicitamente il file unificato in `unbound.conf` invece del wildcard:
 
 ```
 server:
-    include: "/usr/local/etc/unbound/blacklists.d/BL_all.conf"
+    include: "/usr/local/etc/unbound/blacklists.d/merged.conf"
 ```
 
 ---
