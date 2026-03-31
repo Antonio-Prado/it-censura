@@ -1,55 +1,96 @@
 #!/usr/bin/env python3
+"""
+Download the CONSOB list of blocked financial websites.
 
-import requests, optparse, re
-from urlextract import URLExtract
-from tldextract import extract
-from collections import OrderedDict
+Iterates the CONSOB public "oscuramenti" pages, extracts domain names from
+the free-text blocks that describe each blocking order, and writes one
+domain per line to the output file.
+"""
+
+import argparse
+import re
+import sys
+
+import requests
 from bs4 import BeautifulSoup
+from tldextract import extract as tldext
+from urlextract import URLExtract
 from urllib3.exceptions import InsecureRequestWarning
+
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-def main():
-    global options
-
-    # Elaborazione argomenti della linea di comando
-    usage = "usage: %prog [options] arg"
-    parser = optparse.OptionParser(usage)
-    parser.add_option("-o", "--output", dest="out_file", help="File di output generato")
-
-    (options, args) = parser.parse_args()
-    if len(args) == 1:
-        parser.error("Numero di argomenti non corretto")
-    if (options.out_file is None):
-        parser.error("Numero di argomenti non corretto")
+BASE_URL  = "https://www.consob.it"
+INDEX_TPL = (
+    BASE_URL
+    + "/web/area-pubblica/oscuramenti"
+    "?p_p_id=com_liferay_asset_publisher_web_portlet_AssetPublisherPortlet_INSTANCE_m9PTOY4SM1GU"
+    "&_com_liferay_asset_publisher_web_portlet_AssetPublisherPortlet_INSTANCE_m9PTOY4SM1GU_cur={page}"
+)
+TIMEOUT = 30
 
 
-    curpage=1
-    urls = []
-    url = "https://www.consob.it/web/area-pubblica/oscuramenti?p_p_id=com_liferay_asset_publisher_web_portlet_AssetPublisherPortlet_INSTANCE_m9PTOY4SM1GU&_com_liferay_asset_publisher_web_portlet_AssetPublisherPortlet_INSTANCE_m9PTOY4SM1GU_cur={}".format(curpage)
-    page = requests.get(url,verify=False)
-    soup = BeautifulSoup(page.content, "html.parser")
-    for span in soup.find_all('span', attrs={'class':'lfr-icon-menu-text'}):
-        pag=span.getText()
-        totpages=int(re.search(r"[0-9]{1,2}$",pag).group(0))
-    while(curpage<=totpages):
-        url = "https://www.consob.it/web/area-pubblica/oscuramenti?p_p_id=com_liferay_asset_publisher_web_portlet_AssetPublisherPortlet_INSTANCE_m9PTOY4SM1GU&_com_liferay_asset_publisher_web_portlet_AssetPublisherPortlet_INSTANCE_m9PTOY4SM1GU_cur={}".format(curpage)
-        page = requests.get(url,verify=False)
-        soup = BeautifulSoup(page.content, "html.parser")
-        for div in soup.find_all('div', attrs={'class':'divContent'}):
-            for p in div.find_all(string=re.compile("Di seguito.*siti|riguardano i siti")):
-                block = p.find_next().getText()
-                extractor = URLExtract()
+def _normalize(raw: str) -> str | None:
+    tsd, td, tsu = tldext(raw)
+    if not td or not tsu:
+        return None
+    return f"{tsd}.{td}.{tsu}" if tsd else f"{td}.{tsu}"
+
+
+def _total_pages(soup: BeautifulSoup) -> int:
+    for span in soup.find_all("span", class_="lfr-icon-menu-text"):
+        m = re.search(r"(\d+)$", span.get_text())
+        if m:
+            return int(m.group(1))
+    return 1
+
+
+def scrape() -> list[str]:
+    extractor = URLExtract()
+    seen: dict[str, None] = {}
+
+    try:
+        resp = requests.get(INDEX_TPL.format(page=1), verify=False, timeout=TIMEOUT)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"Error fetching CONSOB index: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    soup  = BeautifulSoup(resp.content, "html.parser")
+    total = _total_pages(soup)
+
+    for page in range(1, total + 1):
+        if page > 1:
+            try:
+                resp = requests.get(INDEX_TPL.format(page=page), verify=False, timeout=TIMEOUT)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.content, "html.parser")
+            except Exception as e:
+                print(f"Warning: page {page} failed: {e}", file=sys.stderr)
+                continue
+
+        for div in soup.find_all("div", class_="divContent"):
+            for node in div.find_all(string=re.compile(r"Di seguito.*siti|riguardano i siti")):
+                block = node.find_next().get_text()
                 for url in extractor.find_urls(block):
-                    tsd, td, tsu = extract(url)
-                    if tsd != "":
-                        url=tsd + '.' + td + '.' + tsu
-                    else:
-                        url=td + '.' + tsu
-                    urls.append(url)
-        curpage = curpage + 1
+                    d = _normalize(url)
+                    if d:
+                        seen[d] = None
 
-    with open(options.out_file,'wb') as f:
-        f.write("\n".join(urls).encode())
+    return list(seen)
 
-if __name__ == '__main__':
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Download CONSOB list of blocked financial websites."
+    )
+    parser.add_argument("-o", "--output", required=True, help="Output file path")
+    args = parser.parse_args()
+
+    domains = scrape()
+    with open(args.output, "w") as f:
+        f.write("\n".join(domains) + "\n")
+    print(f"CONSOB: {len(domains)} domains → {args.output}", file=sys.stderr)
+
+
+if __name__ == "__main__":
     main()

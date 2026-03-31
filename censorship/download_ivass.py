@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
 """
-Scarica e normalizza la lista dei siti abusivi dall'IVASS.
+Download the IVASS list of abusive insurance/broker websites.
 
-Il sito pubblica un indice paginato di comunicati stampa; ogni voce è un PDF
-che contiene i domini da bloccare come hyperlink e/o testo.  Lo script:
-  1. Recupera tutte le pagine dell'indice
-  2. Raccoglie i link ai PDF dei provvedimenti (pattern ivcs*.pdf)
-  3. Per ciascun PDF estrae domini via testo (pdfplumber + URLExtract)
-     e via annotazioni ipertestuali
-  4. Filtra i domini interni IVASS e normalizza con tldextract
-  5. Scrive un dominio per riga nel file di output
+Iterates the IVASS "siti abusivi" index, collects PDF links (ivcs*.pdf),
+extracts domains from each PDF via visible text and hyperlink annotations,
+and writes one domain per line to the output file.
 """
 
+import argparse
 import io
-import optparse
 import re
 import sys
 
@@ -28,135 +23,108 @@ requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 BASE_URL  = "https://www.ivass.it"
 INDEX_URL = BASE_URL + "/cyber/siti-abusivi/index.html"
+TIMEOUT   = 30
 
-# Domini da escludere sempre (IVASS stesso, enti istituzionali)
-EXCLUDE_DOMAINS = {
-    "ivass.it",
-    "governo.it",
-    "giustizia.it",
-    "example.com",
-}
+EXCLUDE = {"ivass.it", "governo.it", "giustizia.it", "example.com"}
 
 
-def get_all_pdf_urls():
-    """Itera le pagine dell'indice e restituisce tutti gli URL dei PDF provvedimenti."""
-    pdf_urls = []
-    seen = set()
-    page_num = 1
-
-    while True:
-        url = f"{INDEX_URL}?page={page_num}" if page_num > 1 else INDEX_URL
-        try:
-            resp = requests.get(url, verify=False, timeout=30)
-            resp.raise_for_status()
-        except Exception as e:
-            print(f"Warning: impossibile recuperare pagina {page_num}: {e}", file=sys.stderr)
-            break
-
-        soup = BeautifulSoup(resp.content, "html.parser")
-        found_on_page = 0
-
-        for a in soup.find_all("a", href=re.compile(r"\.pdf", re.I)):
-            href = a["href"].strip()
-            if href.startswith("/"):
-                href = BASE_URL + href
-            # Considera solo i comunicati IVASS (pattern ivcs*.pdf)
-            if "ivcs" not in href.lower():
-                continue
-            if href not in seen:
-                seen.add(href)
-                pdf_urls.append(href)
-                found_on_page += 1
-
-        if found_on_page == 0:
-            break
-
-        # Passa alla pagina successiva se esiste il link
-        if not soup.find("a", href=re.compile(rf"[?&]page={page_num + 1}")):
-            break
-        page_num += 1
-
-    return pdf_urls
-
-
-def normalize_domain(raw_url):
-    """
-    Ricava il dominio registrato da un URL/dominio grezzo.
-    Restituisce None se non è un dominio valido o va escluso.
-    """
-    tsd, td, tsu = tldext(raw_url)
+def _normalize(raw: str) -> str | None:
+    tsd, td, tsu = tldext(raw)
     if not td or not tsu:
         return None
     full = f"{tsd}.{td}.{tsu}" if tsd else f"{td}.{tsu}"
-    if f"{td}.{tsu}" in EXCLUDE_DOMAINS:
+    if f"{td}.{tsu}" in EXCLUDE:
         return None
-    # Scarta indirizzi IP, localhost e token generici
     if re.match(r"^\d+\.\d+\.\d+\.\d+$", td):
         return None
     return full.lower().strip(".")
 
 
-def extract_domains_from_pdf(pdf_bytes):
-    """Estrae domini da un PDF tramite testo e annotazioni ipertestuali."""
-    extractor = URLExtract()
-    domains = set()
+def get_pdf_urls() -> list[str]:
+    """Return all ivcs*.pdf URLs from the IVASS index (all pages)."""
+    urls: list[str] = []
+    seen: set[str] = set()
+    page = 1
 
+    while True:
+        url = f"{INDEX_URL}?page={page}" if page > 1 else INDEX_URL
+        try:
+            resp = requests.get(url, verify=False, timeout=TIMEOUT)
+            resp.raise_for_status()
+        except Exception as e:
+            print(f"Warning: index page {page} failed: {e}", file=sys.stderr)
+            break
+
+        soup  = BeautifulSoup(resp.content, "html.parser")
+        found = 0
+        for a in soup.find_all("a", href=re.compile(r"\.pdf", re.I)):
+            href = a["href"].strip()
+            if href.startswith("/"):
+                href = BASE_URL + href
+            if "ivcs" not in href.lower() or href in seen:
+                continue
+            seen.add(href)
+            urls.append(href)
+            found += 1
+
+        if not found:
+            break
+        if not soup.find("a", href=re.compile(rf"[?&]page={page + 1}")):
+            break
+        page += 1
+
+    return urls
+
+
+def extract_from_pdf(pdf_bytes: bytes) -> set[str]:
+    extractor = URLExtract()
+    domains: set[str] = set()
     try:
         reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
-        for page in reader.pages:
-            # 1. Testo visibile
-            text = page.extract_text() or ""
-            for url in extractor.find_urls(text):
-                d = normalize_domain(url)
+        for pg in reader.pages:
+            for url in extractor.find_urls(pg.extract_text() or ""):
+                d = _normalize(url)
                 if d:
                     domains.add(d)
-
-            # 2. Annotazioni hyperlink (URI embedded nel PDF)
-            if "/Annots" in page:
-                for annot_ref in page["/Annots"]:
+            if "/Annots" in pg:
+                for ref in pg["/Annots"]:
                     try:
-                        annot = annot_ref.get_object()
+                        annot = ref.get_object()
                         if annot.get("/Subtype") == "/Link":
                             action = annot.get("/A")
                             if action and action.get("/S") == "/URI":
-                                uri = str(action["/URI"])
-                                d = normalize_domain(uri)
+                                d = _normalize(str(action["/URI"]))
                                 if d:
                                     domains.add(d)
                     except Exception:
                         pass
     except Exception as e:
-        print(f"Warning: errore nel parsing del PDF: {e}", file=sys.stderr)
-
+        print(f"Warning: PDF parse error: {e}", file=sys.stderr)
     return domains
 
 
-def main():
-    usage = "usage: %prog -o <output_file>"
-    parser = optparse.OptionParser(usage)
-    parser.add_option("-o", "--output", dest="out_file", help="File di output (un dominio per riga)")
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Download IVASS list of abusive insurance/broker websites."
+    )
+    parser.add_argument("-o", "--output", required=True, help="Output file path")
+    args = parser.parse_args()
 
-    (options, args) = parser.parse_args()
-    if options.out_file is None:
-        parser.error("Specificare il file di output con -o")
+    pdf_urls = get_pdf_urls()
+    print(f"Found {len(pdf_urls)} PDFs to process", file=sys.stderr)
 
-    all_domains = set()
-    pdf_urls = get_all_pdf_urls()
-    print(f"Trovati {len(pdf_urls)} PDF da processare", file=sys.stderr)
-
+    all_domains: set[str] = set()
     for pdf_url in pdf_urls:
         try:
             resp = requests.get(pdf_url, verify=False, timeout=60)
             resp.raise_for_status()
-            domains = extract_domains_from_pdf(resp.content)
-            all_domains.update(domains)
+            all_domains.update(extract_from_pdf(resp.content))
         except Exception as e:
-            print(f"Warning: impossibile processare {pdf_url}: {e}", file=sys.stderr)
+            print(f"Warning: {pdf_url}: {e}", file=sys.stderr)
 
-    print(f"Domini totali estratti: {len(all_domains)}", file=sys.stderr)
-
-    with open(options.out_file, "wb") as f:
-        f.write(("\n".join(sorted(all_domains)) + "\n").encode())
+    with open(args.output, "w") as f:
+        f.write("\n".join(sorted(all_domains)) + "\n")
+    print(f"IVASS: {len(all_domains)} domains → {args.output}", file=sys.stderr)
 
 
 if __name__ == "__main__":

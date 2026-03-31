@@ -1,70 +1,92 @@
 #!/usr/bin/env python3
+"""
+Download the latest AGCOM copyright-protection blacklist (Allegato B).
 
-import requests, optparse, re
+Scrapes the AGCOM website to find the most recent "Provvedimento" containing
+a "Determina" with an "Allegato B" attachment, then downloads it.
+The output is typically a plain-text domain list suitable for parse.py --format plain.
+"""
+
+import argparse
+import sys
+
+import requests
 from bs4 import BeautifulSoup
 from urllib3.exceptions import InsecureRequestWarning
+
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-def main():
-    global options
-# Definisco le tre variabili sotto e le inizializzo con valori a caso
-# Questo perchè se in tutta la pagina non trovo un provvedimento
-# allora determina,lastDetermina e allegatoB restano non inizializzate e mandano
-# in errore lo script
-
-    global determina
-    global lastDetermina
-    global allegatoB
-
-    determina = ""
-    lastDetermina = "https://www.agcom.it/provvedimenti-a-tutela-del-diritto-d-autore"
-    allegatoB = "https://www.example.com"
+BASE_URL  = "https://www.agcom.it"
+INDEX_URL = BASE_URL + "/provvedimenti-a-tutela-del-diritto-d-autore"
+MAX_PAGES = 50
+TIMEOUT   = 30
 
 
-    # Elaborazione argomenti della linea di comando
-    usage = "usage: %prog [options] arg"
-    parser = optparse.OptionParser(usage)
-    parser.add_option("-o", "--output", dest="out_file", help="File di output generato")
+def find_allegato_b() -> str | None:
+    """Return the URL of the most recent Allegato B, or None if not found."""
+    for page in range(1, MAX_PAGES + 1):
+        url = (
+            f"{INDEX_URL}?p_p_id=listapersconform_WAR_agcomlistsportlet"
+            f"&p_p_lifecycle=0&p_p_state=normal&p_p_mode=view"
+            f"&p_p_col_id=column-1&p_p_col_count=1"
+            f"&_listapersconform_WAR_agcomlistsportlet_numpagris=50"
+            f"&_listapersconform_WAR_agcomlistsportlet_curpagris={page}"
+        )
+        try:
+            resp = requests.get(url, verify=False, timeout=TIMEOUT)
+            resp.raise_for_status()
+        except Exception as e:
+            print(f"Warning: page {page} fetch failed: {e}", file=sys.stderr)
+            break
 
-    (options, args) = parser.parse_args()
-    if len(args) == 1:
-        parser.error("Numero di argomenti non corretto")
-    if (options.out_file is None):
-        parser.error("Numero di argomenti non corretto")
+        soup = BeautifulSoup(resp.content, "html.parser")
+        for div in soup.find_all("div", class_="risultato"):
+            for p in div.find_all("p"):
+                text = p.text.lower()
+                if "provvedimento" not in text and "ordine" not in text:
+                    continue
+                determina = div.find(
+                    lambda tag: tag.name == "a" and "determina" in tag.text.lower()
+                )
+                if not determina:
+                    continue
+                det_url = BASE_URL + determina["href"]
+                try:
+                    det_resp = requests.get(det_url, verify=False, timeout=TIMEOUT)
+                    det_resp.raise_for_status()
+                except Exception as e:
+                    print(f"Warning: determina fetch failed: {e}", file=sys.stderr)
+                    continue
+                det_soup = BeautifulSoup(det_resp.content, "html.parser")
+                for a in det_soup.find_all("a"):
+                    if "Allegato B" in a.text:
+                        return a["href"]
+    return None
 
-    curpage=1
-    lastDetermina = None
-    while((curpage<50) and (lastDetermina is None)):
-        url = "https://www.agcom.it/provvedimenti-a-tutela-del-diritto-d-autore?p_p_id=listapersconform_WAR_agcomlistsportlet&p_p_lifecycle=0&p_p_state=normal&p_p_mode=view&p_p_col_id=column-1&p_p_col_count=1&_listapersconform_WAR_agcomlistsportlet_numpagris=50&_listapersconform_WAR_agcomlistsportlet_curpagris={}".format(curpage)
-        page = requests.get(url,verify=False)
-        soup = BeautifulSoup(page.content, "html.parser")
-        for div in soup.find_all('div', attrs={'class':'risultato'}):
-            if lastDetermina: break
-            for p in div.find_all('p'):
-                if ((p.text.lower().find("provvedimento")==-1) and (p.text.lower().find("ordine")==-1)):continue
-                    #determina = div.find(lambda tag:(tag.name=="a" and (tag.text.lower().find("determina")!=-1) or (tag.text.lower().find("determina")!=-1)))
-                determina = div.find(lambda tag:(tag.name=="a" and tag.text.lower().find("determina")!=-1))
-                if determina:
-                    lastDetermina = "https://www.agcom.it"+determina["href"]
-                    #### Check Allegato ######
-                    page = requests.get(lastDetermina, verify=False)
-                    soup = BeautifulSoup(page.content, "html.parser")
-                    # Controllo se ho trovato un Allegato B vedendo se la variabile inizializzata è stata modificata
-                    # Solo se allegatoB è stato trovato, allora lo elaboro
-                    for allegato in soup.find_all("a"):
-                        if not "Allegato B" in allegato.text:continue
-                        allegatoB = allegato["href"]
-                        break
-                    if not "www.example.com" in allegatoB:
-                        response = requests.get(allegatoB, verify=False)
-                        with open(options.out_file,'wb') as f:
-                            f.write(response.content)
-                    else:
-                        lastDetermina = None
-                    break
-        curpage = curpage + 1
-    if lastDetermina is None:
-        return(False)
 
-if __name__ == '__main__':
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Download the latest AGCOM copyright blacklist (Allegato B)."
+    )
+    parser.add_argument("-o", "--output", required=True, help="Output file path")
+    args = parser.parse_args()
+
+    allegato_url = find_allegato_b()
+    if not allegato_url:
+        print("Error: Allegato B not found on AGCOM website.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        resp = requests.get(allegato_url, verify=False, timeout=60)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"Error downloading Allegato B: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(args.output, "wb") as f:
+        f.write(resp.content)
+    print(f"AGCOM Allegato B → {args.output}", file=sys.stderr)
+
+
+if __name__ == "__main__":
     main()
