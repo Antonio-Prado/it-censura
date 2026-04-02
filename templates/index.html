@@ -231,6 +231,33 @@
   /* Reload */
   .reload-section { margin-top: 1rem; }
 
+  /* PS dashboard */
+  .ps-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: .4rem;
+    margin-bottom: .9rem;
+  }
+  .ps-stat {
+    background: var(--bg);
+    border-radius: 5px;
+    padding: .5rem .6rem;
+    text-align: center;
+  }
+  .ps-stat .ps-val { font-size: 1.1rem; font-weight: 700; font-family: monospace; color: var(--text); }
+  .ps-stat .ps-lbl { font-size: .68rem; color: var(--muted); margin-top: .1rem; }
+  .ps-meta { font-size: .78rem; display: flex; flex-direction: column; gap: .35rem; margin-bottom: .9rem; }
+  .ps-meta-row { display: flex; justify-content: space-between; align-items: center; }
+  .ps-meta-key { color: var(--muted); }
+  .ps-badge {
+    font-size: .72rem; font-weight: 600; padding: .15rem .5rem;
+    border-radius: 999px;
+  }
+  .ps-badge.ok      { background: rgba(62,207,110,.15);  color: var(--success); }
+  .ps-badge.warn    { background: rgba(240,160,48,.15);  color: var(--warning); }
+  .ps-badge.danger  { background: rgba(224,82,82,.15);   color: var(--danger);  }
+  .ps-badge.muted   { background: rgba(107,112,153,.15); color: var(--muted);   }
+
   @media (max-width: 900px) {
     .layout { grid-template-columns: 1fr; padding: 1rem; }
   }
@@ -309,6 +336,17 @@
       </p>
       <button class="btn-primary" id="btn-reload" onclick="reloadUnbound()">Ricarica Unbound</button>
       <pre id="reload-out" style="display:none;margin-top:.8rem;background:var(--bg);padding:.7rem;border-radius:5px;font-size:.75rem;color:var(--muted);overflow-x:auto;"></pre>
+    </div>
+
+    <!-- Piracy Shield card -->
+    <div class="card" id="ps-card">
+      <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Piracy Shield</span>
+        <button class="btn-neutral" style="padding:.25rem .6rem;font-size:.72rem;" onclick="loadPsStatus()">Aggiorna</button>
+      </div>
+      <div id="ps-body">
+        <div class="loader-row"><span class="spinner"></span>Caricamento…</div>
+      </div>
     </div>
 
     <!-- Update card -->
@@ -759,10 +797,116 @@ async function pollUpdate() {
 })();
 
 
+// ── Piracy Shield ─────────────────────────────────────────────────────────────
+let _psPollTimer = null;
+
+function _fmtExpiry(secs) {
+  if (secs === null || secs === undefined)
+    return { label: "nessun token", cls: "muted" };
+  if (secs <= 0)
+    return { label: "scaduto — ri-autenticare", cls: "danger" };
+  if (secs < 3600)
+    return { label: `scade in ${Math.ceil(secs/60)} min`, cls: "danger" };
+  if (secs < 86400)
+    return { label: `scade in ${Math.ceil(secs/3600)} ore`, cls: "warn" };
+  return { label: `scade in ${Math.floor(secs/86400)} giorni`, cls: "ok" };
+}
+
+function _fmtBgp(state) {
+  if (state === "non configurato") return { label: state, cls: "muted" };
+  if (state === "Established")     return { label: state, cls: "ok" };
+  return { label: state, cls: "warn" };
+}
+
+async function loadPsStatus() {
+  const body = document.getElementById("ps-body");
+  const [, d] = await api("GET", "/api/ps/status");
+
+  if (!d || d.error) {
+    body.innerHTML = `<div style="color:var(--danger);font-size:.85rem;">Errore nel caricamento</div>`;
+    return;
+  }
+
+  const exp  = _fmtExpiry(d.refresh_expires_in);
+  const bgp  = _fmtBgp(d.bgp_state);
+
+  body.innerHTML = `
+    <div class="ps-grid">
+      <div class="ps-stat">
+        <div class="ps-val">${d.fqdn_count.toLocaleString("it-IT")}</div>
+        <div class="ps-lbl">FQDN</div>
+      </div>
+      <div class="ps-stat">
+        <div class="ps-val">${d.ipv4_count.toLocaleString("it-IT")}</div>
+        <div class="ps-lbl">IPv4</div>
+      </div>
+      <div class="ps-stat">
+        <div class="ps-val">${d.ipv6_count.toLocaleString("it-IT")}</div>
+        <div class="ps-lbl">IPv6</div>
+      </div>
+    </div>
+    <div class="ps-meta">
+      <div class="ps-meta-row">
+        <span class="ps-meta-key">Token refresh</span>
+        <span class="ps-badge ${exp.cls}">${exp.label}</span>
+      </div>
+      <div class="ps-meta-row">
+        <span class="ps-meta-key">BGP peer</span>
+        <span class="ps-badge ${bgp.cls}">${bgp.label}</span>
+      </div>
+    </div>
+    ${d.enabled ? `
+    <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
+      <button class="btn-primary" id="btn-ps-sync" onclick="startPsSync()">Sincronizza PS</button>
+      <span id="ps-sync-status" style="font-size:.8rem;color:var(--muted);"></span>
+    </div>
+    <pre id="ps-sync-log" style="display:none;margin-top:.9rem;background:var(--bg);border:1px solid var(--border);padding:.7rem;border-radius:5px;font-size:.72rem;color:var(--muted);max-height:180px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;"></pre>
+    ` : `<p style="font-size:.8rem;color:var(--muted);">Imposta <code>PS_SYNC_CMD</code> per abilitare la sincronizzazione.</p>`}
+  `;
+}
+
+async function startPsSync() {
+  const [s, data] = await api("POST", "/api/ps/sync");
+  if (s === 409) { toast(data.error, "err"); return; }
+  if (s !== 200) { toast("Avvio fallito", "err"); return; }
+  document.getElementById("btn-ps-sync").disabled = true;
+  document.getElementById("ps-sync-log").style.display = "block";
+  document.getElementById("ps-sync-log").textContent = "";
+  pollPsSync();
+}
+
+async function pollPsSync() {
+  clearTimeout(_psPollTimer);
+  const statusEl = document.getElementById("ps-sync-status");
+  const logEl    = document.getElementById("ps-sync-log");
+  const btnEl    = document.getElementById("btn-ps-sync");
+  if (!statusEl) return;
+
+  const [, data] = await api("GET", "/api/ps/sync/status");
+  logEl.textContent = data.output || "";
+  logEl.scrollTop = logEl.scrollHeight;
+
+  if (data.status === "running") {
+    statusEl.innerHTML = `<span class="spinner" style="width:11px;height:11px;border-width:2px;margin:0 4px 0 0;vertical-align:middle"></span>In corso dalle ${data.started}…`;
+    _psPollTimer = setTimeout(pollPsSync, 3000);
+  } else if (data.status === "done") {
+    statusEl.innerHTML = `<span style="color:var(--success)">✓ Completato alle ${data.ended}</span>`;
+    btnEl.disabled = false;
+    toast("Sincronizzazione PS completata");
+    loadPsStatus();
+    loadStats();
+  } else if (data.status === "error") {
+    statusEl.innerHTML = `<span style="color:var(--danger)">✗ Errore alle ${data.ended}</span>`;
+    btnEl.disabled = false;
+    toast("Sincronizzazione PS terminata con errori", "err");
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadManual();
 loadWhitelist();
 loadStats();
+loadPsStatus();
 </script>
 </body>
 </html>

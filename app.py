@@ -151,6 +151,15 @@ WHITELIST    = Path(os.environ.get("WHITELIST",   str(BL_DIR / "whitelist.txt"))
 APPLY_CMD    = os.environ.get("APPLY_CMD", "")   # eseguito dopo modifiche alla lista manuale/whitelist
 UPDATE_CMD   = os.environ.get("UPDATE_CMD", "")  # eseguito per l'aggiornamento completo delle blacklist
 
+# ── Piracy Shield ─────────────────────────────────────────────────────────────
+PS_SYNC_CMD    = os.environ.get("PS_SYNC_CMD", "")
+PS_BGP_NEIGHBOR = os.environ.get("PS_BGP_NEIGHBOR", "")
+PS_TOKEN_FILE  = Path(os.environ.get("PS_TOKEN_FILE",  Path.home() / ".ps_tokens.json"))
+PS_STATE_FILE  = Path(os.environ.get("PS_STATE_FILE",  Path.home() / ".ps_state.json"))
+PS_FQDN_CONF   = Path(os.environ.get("PS_FQDN_CONF",  "/usr/local/etc/unbound/blacklists.d/PS.conf"))
+PS_IPV4_FILE   = Path(os.environ.get("PS_IPV4_FILE",  "/etc/unbound/blacklists/ps_ipv4.txt"))
+PS_IPV6_FILE   = Path(os.environ.get("PS_IPV6_FILE",  "/etc/unbound/blacklists/ps_ipv6.txt"))
+
 # ── SMTP ──────────────────────────────────────────────────────────────────────
 SMTP_HOST     = os.environ.get("SMTP_HOST", "")
 SMTP_PORT     = int(os.environ.get("SMTP_PORT", "587"))
@@ -214,6 +223,10 @@ STATS_CACHE_TTL = 300  # secondi
 # ── Update job ────────────────────────────────────────────────────────────────
 _update_job: dict = {"status": "idle", "started": None, "ended": None, "output": ""}
 _update_lock = threading.Lock()
+
+# ── Piracy Shield sync job ─────────────────────────────────────────────────────
+_ps_job: dict = {"status": "idle", "started": None, "ended": None, "output": ""}
+_ps_lock = threading.Lock()
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────
@@ -622,6 +635,126 @@ def api_update_status():
     with _update_lock:
         return jsonify(dict(_update_job))
 
+
+
+# ── Piracy Shield helpers ──────────────────────────────────────────────────────
+
+def _ps_count_conf() -> int:
+    if not PS_FQDN_CONF.exists():
+        return 0
+    r = subprocess.run(["grep", "-c", "^local-zone:", str(PS_FQDN_CONF)],
+                       capture_output=True, text=True, env=_env())
+    try:
+        return int(r.stdout.strip())
+    except Exception:
+        return 0
+
+
+def _ps_count_ips(path: Path) -> int:
+    if not path.exists():
+        return 0
+    try:
+        with path.open(errors="replace") as f:
+            return sum(1 for ln in f if ln.strip())
+    except Exception:
+        return 0
+
+
+def _ps_token_info() -> dict:
+    if not PS_TOKEN_FILE.exists():
+        return {"refresh_expires_at": None}
+    try:
+        tokens = json.loads(PS_TOKEN_FILE.read_text())
+        return {"refresh_expires_at": tokens.get("refresh_expires_at")}
+    except Exception:
+        return {"refresh_expires_at": None}
+
+
+def _ps_bgp_state() -> str:
+    if not PS_BGP_NEIGHBOR:
+        return "non configurato"
+    try:
+        r = subprocess.run(
+            ["bgpctl", "show", "neighbor", PS_BGP_NEIGHBOR],
+            capture_output=True, text=True, timeout=5, env=_env(),
+        )
+        for line in (r.stdout + r.stderr).splitlines():
+            if "BGP state" in line:
+                return line.split("=", 1)[1].strip().split(",")[0].strip()
+        return "sconosciuto"
+    except Exception:
+        return "errore"
+
+
+def _run_ps_sync_bg():
+    """Esegue PS_SYNC_CMD in background e registra l'output riga per riga."""
+    global _ps_job
+    if not PS_SYNC_CMD:
+        with _ps_lock:
+            _ps_job.update({"status": "error", "ended": time.strftime("%H:%M:%S"),
+                            "output": "PS_SYNC_CMD non configurato."})
+        return
+    try:
+        proc = subprocess.Popen(
+            PS_SYNC_CMD, shell=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, env=_env(),
+        )
+        lines = []
+        for line in proc.stdout:
+            lines.append(line.rstrip())
+            with _ps_lock:
+                _ps_job["output"] = "\n".join(lines)
+        proc.wait()
+        rc = proc.returncode
+    except Exception as exc:
+        rc = 1
+        with _ps_lock:
+            _ps_job["output"] += f"\nErrore: {exc}"
+
+    with _ps_lock:
+        _ps_job["status"] = "done" if rc == 0 else "error"
+        _ps_job["ended"] = time.strftime("%H:%M:%S")
+
+    global _stats_building
+    _stats_building = True
+    threading.Thread(target=_compute_stats_bg, daemon=True).start()
+
+
+@app.route("/api/ps/status")
+@login_required
+def api_ps_status():
+    token = _ps_token_info()
+    now = time.time()
+    exp = token["refresh_expires_at"]
+    return jsonify({
+        "enabled":            bool(PS_SYNC_CMD),
+        "fqdn_count":         _ps_count_conf(),
+        "ipv4_count":         _ps_count_ips(PS_IPV4_FILE),
+        "ipv6_count":         _ps_count_ips(PS_IPV6_FILE),
+        "refresh_expires_in": int(exp - now) if exp else None,
+        "bgp_state":          _ps_bgp_state(),
+    })
+
+
+@app.route("/api/ps/sync", methods=["POST"])
+@login_required
+def api_ps_sync_start():
+    with _ps_lock:
+        if _ps_job["status"] == "running":
+            return jsonify({"error": "Sincronizzazione PS già in corso"}), 409
+        _ps_job.update({"status": "running", "started": time.strftime("%H:%M:%S"),
+                        "ended": None, "output": ""})
+    _audit("ps_sync_start")
+    threading.Thread(target=_run_ps_sync_bg, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/ps/sync/status")
+@login_required
+def api_ps_sync_status():
+    with _ps_lock:
+        return jsonify(dict(_ps_job))
 
 
 def _apply_changes() -> tuple[int, str]:

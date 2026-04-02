@@ -201,6 +201,8 @@ Tutta la configurazione avviene tramite variabili d'ambiente. Non sono necessari
 | `PS_IPV4_FILE` | `/etc/unbound/blacklists/ps_ipv4.txt` | Output IPv4 per BGP blackhole |
 | `PS_IPV6_FILE` | `/etc/unbound/blacklists/ps_ipv6.txt` | Output IPv6 per BGP blackhole |
 | `PS_MARK_PROCESSED` | `true` | Se inviare il feedback di stato all'API dopo ogni sincronizzazione |
+| `PS_SYNC_CMD` | *(vuoto)* | Comando completo di sync eseguito dal pulsante "Sincronizza PS" nell'interfaccia web (es. `python3 ... && service unbound reload && sh ...`) |
+| `PS_BGP_NEIGHBOR` | *(vuoto)* | IP del peer BGP; se impostato, l'interfaccia mostra lo stato della sessione via `bgpctl show neighbor` |
 
 ### VPN Piracy Shield (`vpn/ps_vpn_setup.sh`)
 
