@@ -238,7 +238,7 @@ UPDATE_CMD="sh /opt/it-censura/censorship/update.sh" sh weekly_update.sh
 
 Per chi affianca alle liste ufficiali delle liste community in formato Unbound (es. malware, phishing),
 è possibile posizionarle in `BL_DIR` come file `BL_*.conf` ed eseguire `BL_concat.sh` per unire
-e deduplicare tutto in un unico file `BL_all.conf`:
+e deduplicare tutto in un unico file `merged.conf`:
 
 ```sh
 BL_DIR=/etc/unbound/blacklists \
@@ -253,6 +253,25 @@ In questo caso caricare esplicitamente il file unificato in `unbound.conf` invec
 server:
     include: "/usr/local/etc/unbound/blacklists.d/merged.conf"
 ```
+
+### Interfaccia web con liste community
+
+Quando si usa `BL_concat.sh`, il file effettivamente caricato da Unbound è `merged.conf` in `CONF_DIR`.
+L'interfaccia web deve quindi essere avviata con `BL_DIR` puntato a `CONF_DIR`, altrimenti vedrebbe
+i singoli file sorgente invece del file unificato attivo. Poiché `manual.txt` e `whitelist.txt`
+rimangono in `BL_DIR`, vanno indicati esplicitamente:
+
+```sh
+BL_DIR=/usr/local/etc/unbound/blacklists.d \
+MANUAL_LIST=/etc/unbound/blacklists/manual.txt \
+WHITELIST=/etc/unbound/blacklists/whitelist.txt \
+APPLY_CMD="sh /opt/it-censura/censorship/BL_concat.sh && service unbound reload" \
+UPDATE_CMD="sh /opt/it-censura/censorship/update.sh && sh /opt/it-censura/censorship/BL_concat.sh && service unbound reload" \
+python3 app.py
+```
+
+> **Nota:** con questa configurazione `APPLY_CMD` riesegue `BL_concat.sh` dopo ogni modifica alla
+> lista manuale, in modo che `merged.conf` rimanga aggiornato.
 
 ---
 
