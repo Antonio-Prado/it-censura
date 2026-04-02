@@ -212,6 +212,14 @@ Tutta la configurazione avviene tramite variabili d'ambiente. Non sono necessari
 | `VPN_AZURE_NET` | AGCOM → ISP | Rete virtuale Azure in notazione CIDR (es. `10.0.0.0/16`) |
 | `VPN_PSK` | AGCOM → ISP | Chiave condivisa (Pre-Shared Key) |
 
+### BGP blackhole (`vpn/ps_bgp_setup.sh`)
+
+| Variabile | Descrizione |
+|-----------|-------------|
+| `BGP_ASN` | AS number dell'ISP |
+| `BGP_LOCAL_IP` | IP locale usato come router-id e sorgente della sessione iBGP |
+| `BGP_NEIGHBOR_IP` | IP del router BGP peer che riceve gli annunci blackhole |
+
 ---
 
 ## Whitelist
@@ -387,7 +395,28 @@ l'access token (1h) tramite refresh, il refresh token (7gg) tramite nuovo login.
 
 ### 4. BGP blackhole con OpenBGPD
 
-`ps_bgp_push.sh` carica gli IP in OpenBGPD tramite `bgpctl`:
+Installare e configurare OpenBGPD sull'host che gira ps_sync.py. Il demone fa un
+peering iBGP con il router dell'ISP e annuncia gli IP Piracy Shield con community
+BLACKHOLE; il router li riceve e scarta il traffico verso quegli indirizzi.
+
+```sh
+BGP_ASN=65001 \
+BGP_LOCAL_IP=10.0.0.1 \
+BGP_NEIGHBOR_IP=10.0.0.254 \
+sh vpn/ps_bgp_setup.sh
+```
+
+Lo script installa OpenBGPD via `pkg`, scrive `/etc/bgpd.conf` (`chmod 600`),
+abilita il servizio in `/etc/rc.conf` e avvia il demone.
+
+Per verificare la sessione BGP e i route annunciati:
+
+```sh
+bgpctl show neighbor   # stato del peering
+bgpctl show rib        # route attualmente annunciati
+```
+
+Una volta configurato OpenBGPD, `ps_bgp_push.sh` aggiorna i route ad ogni sync:
 
 ```sh
 sh censorship/ps_bgp_push.sh
