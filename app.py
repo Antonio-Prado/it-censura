@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DNS Blacklist Manager - Web GUI for Unbound/censorship blacklists
+DNS Blacklist Manager - Interfaccia web per la gestione delle blacklist Unbound/censura
 """
 from __future__ import annotations
 
@@ -147,9 +147,9 @@ AUDIT_LOG    = Path(os.environ.get("AUDIT_LOG", "/var/log/dns_gui_audit.log"))
 BL_DIR       = Path(os.environ.get("BL_DIR", "/etc/unbound/blacklists"))
 MANUAL_LIST  = Path(os.environ.get("MANUAL_LIST", str(BL_DIR / "manual.txt")))
 WHITELIST    = Path(os.environ.get("WHITELIST",   str(BL_DIR / "whitelist.txt")))
-# Optional shell commands (leave empty to disable the feature)
-APPLY_CMD    = os.environ.get("APPLY_CMD", "")   # run after manual/whitelist changes
-UPDATE_CMD   = os.environ.get("UPDATE_CMD", "")  # run for full blacklist update
+# Comandi shell opzionali (lasciare vuoto per disabilitare la funzione)
+APPLY_CMD    = os.environ.get("APPLY_CMD", "")   # eseguito dopo modifiche alla lista manuale/whitelist
+UPDATE_CMD   = os.environ.get("UPDATE_CMD", "")  # eseguito per l'aggiornamento completo delle blacklist
 
 # ── SMTP ──────────────────────────────────────────────────────────────────────
 SMTP_HOST     = os.environ.get("SMTP_HOST", "")
@@ -166,9 +166,9 @@ _tokens_lock  = threading.Lock()
 UNBOUND_SERVICE  = os.environ.get("UNBOUND_SERVICE", "unbound")
 UNBOUND_CONF_DIR = os.environ.get("UNBOUND_CONF_DIR", "/usr/local/etc/unbound/blacklists.d")
 
-# Official/mandatory lists — shown with a distinct badge in the UI.
-# Defaults to Italian regulatory lists; override with OFFICIAL_LISTS env var
-# (comma-separated list stems matching your filenames, e.g. "AGCOM,CNCPO,CONSOB").
+# Liste ufficiali/obbligatorie — mostrate con un badge distinto nell'interfaccia.
+# Default: liste regolamentari italiane; sovrascrivibile con la variabile OFFICIAL_LISTS
+# (nomi base separati da virgola corrispondenti ai file, es. "AGCOM,CNCPO,CONSOB").
 _ITALIAN_OFFICIAL = "AAMS,ADMT,CNCPO,AGCOM,CONSOB,IVASS"
 OFFICIAL_LISTS = sorted(
     s.strip() for s in
@@ -178,13 +178,13 @@ OFFICIAL_LISTS = sorted(
 
 
 def _get_blacklists() -> dict[str, Path]:
-    """Auto-discover blacklist files in BL_DIR at runtime.
+    """Rileva automaticamente i file blacklist in BL_DIR a runtime.
 
-    Supported formats (detected by extension):
-      .conf  — Unbound local-zone format  (local-zone: domain always_nxdomain)
-      .txt   — plain domain list or hosts format  (0.0.0.0 domain)
-      .csv   — semicolon-separated list where domain follows a ';'
-    Files named like MANUAL_LIST or WHITELIST are excluded automatically.
+    Formati supportati (rilevati dall'estensione):
+      .conf  — formato Unbound local-zone  (local-zone: dominio always_nxdomain)
+      .txt   — lista domini semplice o formato hosts  (0.0.0.0 dominio)
+      .csv   — lista separata da punto e virgola dove il dominio segue un ';'
+    I file corrispondenti a MANUAL_LIST o WHITELIST vengono esclusi automaticamente.
     """
     lists: dict[str, Path] = {}
     if BL_DIR.exists():
@@ -420,7 +420,7 @@ def help_page():
 def api_search():
     domain = _normalise(request.args.get("domain", ""))
     if not domain:
-        return jsonify({"error": "Domain is required"}), 400
+        return jsonify({"error": "Il dominio è obbligatorio"}), 400
     if not _domain_valid(domain):
         return jsonify({"error": f"'{domain}' non è un nome di dominio valido"}), 400
 
@@ -454,7 +454,7 @@ def api_manual_add():
     data = request.get_json(silent=True) or {}
     domain = _normalise(data.get("domain", ""))
     if not domain:
-        return jsonify({"error": "Domain is required"}), 400
+        return jsonify({"error": "Il dominio è obbligatorio"}), 400
     if not _domain_valid(domain):
         return jsonify({"error": f"'{domain}' non è un nome di dominio valido"}), 400
 
@@ -505,7 +505,7 @@ def api_whitelist_add():
     data = request.get_json(silent=True) or {}
     domain = _normalise(data.get("domain", ""))
     if not domain:
-        return jsonify({"error": "Domain is required"}), 400
+        return jsonify({"error": "Il dominio è obbligatorio"}), 400
     if not _domain_valid(domain):
         return jsonify({"error": f"'{domain}' non è un nome di dominio valido"}), 400
 
@@ -572,7 +572,7 @@ def _run_update_bg():
     if not UPDATE_CMD:
         with _update_lock:
             _update_job.update({"status": "error", "ended": time.strftime("%H:%M:%S"),
-                                "output": "UPDATE_CMD not configured."})
+                                "output": "UPDATE_CMD non configurato."})
         return
     env = _env()
     try:
@@ -625,7 +625,7 @@ def api_update_status():
 
 
 def _apply_changes() -> tuple[int, str]:
-    """Run APPLY_CMD after a manual list or whitelist change. No-op if not configured."""
+    """Esegue APPLY_CMD dopo una modifica alla lista manuale o whitelist. Nessuna operazione se non configurato."""
     if not APPLY_CMD:
         return 0, ""
     try:

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Download the latest AGCOM copyright-protection blacklist (Allegato B).
+Scarica l'ultima blacklist AGCOM a tutela del diritto d'autore (Allegato B).
 
-Scrapes the AGCOM website to find the most recent "Provvedimento" containing
-a "Determina" with an "Allegato B" attachment, then downloads it.
-The output is typically a plain-text domain list suitable for parse.py --format plain.
+Analizza il sito AGCOM per trovare il "Provvedimento" più recente contenente
+una "Determina" con allegato "Allegato B" e lo scarica.
+L'output è tipicamente una lista di domini in testo semplice compatibile con parse.py --format plain.
 """
 
 import argparse
@@ -23,7 +23,7 @@ TIMEOUT   = 30
 
 
 def find_allegato_b() -> str | None:
-    """Return the URL of the most recent Allegato B, or None if not found."""
+    """Restituisce l'URL dell'Allegato B più recente, o None se non trovato."""
     for page in range(1, MAX_PAGES + 1):
         url = (
             f"{INDEX_URL}?p_p_id=listapersconform_WAR_agcomlistsportlet"
@@ -66,9 +66,9 @@ def find_allegato_b() -> str | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Download the latest AGCOM copyright blacklist (Allegato B)."
+        description="Scarica l'ultima blacklist AGCOM sul diritto d'autore (Allegato B)."
     )
-    parser.add_argument("-o", "--output", required=True, help="Output file path")
+    parser.add_argument("-o", "--output", required=True, help="Percorso del file di output")
     args = parser.parse_args()
 
     allegato_url = find_allegato_b()

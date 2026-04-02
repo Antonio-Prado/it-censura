@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Parse official Italian DNS blacklists and output Unbound local-zone format.
+Converte le blacklist DNS ufficiali italiane in formato Unbound local-zone.
 
-Supported input formats:
-  plain  — one entry per line; handles bare domains, hosts format (IP domain),
-            and full URLs (scheme://domain/path)
-  cncpo  — semicolon-separated CSV; domain is in column 2 (index 1),
-            first row is header
+Formati di input supportati:
+  plain  — un dominio per riga; gestisce domini nudi, formato hosts (IP dominio)
+            e URL completi (schema://dominio/percorso)
+  cncpo  — CSV separato da punto e virgola; il dominio è nella colonna 2 (indice 1),
+            la prima riga è l'intestazione
 
 Output (Unbound always_nxdomain):
   server:
-  local-zone: "domain.example" always_nxdomain
+  local-zone: "dominio.esempio" always_nxdomain
   ...
 """
 
@@ -31,7 +31,7 @@ def _valid(domain: str) -> bool:
 
 
 def _extract(token: str) -> str:
-    """Extract a bare domain from a token (URL, domain, or IP:port)."""
+    """Estrae il dominio nudo da un token (URL, dominio o IP:porta)."""
     token = token.strip().lower().rstrip('/')
     if '://' in token:
         host = urlparse(token).hostname or ''
@@ -41,7 +41,7 @@ def _extract(token: str) -> str:
 
 
 def parse_plain(path: Path) -> list[str]:
-    """Plain-text list: bare domains, hosts format, or full URLs."""
+    """Lista testo semplice: domini nudi, formato hosts o URL completi."""
     seen: dict[str, None] = {}
     with path.open(errors='replace') as f:
         for line in f:
@@ -49,7 +49,7 @@ def parse_plain(path: Path) -> list[str]:
             if not line or line.startswith('#'):
                 continue
             parts = line.split()
-            # hosts format: skip the IP/address prefix, take last token
+            # formato hosts: salta il prefisso IP/indirizzo, prende l'ultimo token
             token = parts[-1] if len(parts) > 1 else parts[0]
             d = _extract(token)
             if d:
@@ -58,7 +58,7 @@ def parse_plain(path: Path) -> list[str]:
 
 
 def parse_cncpo(path: Path) -> list[str]:
-    """CNCPO CSV: semicolon-delimited, domain in column 2, first row is header."""
+    """CSV CNCPO: separato da punto e virgola, dominio nella colonna 2, prima riga intestazione."""
     seen: dict[str, None] = {}
     with path.open(errors='replace', newline='') as f:
         reader = csv.reader(f, delimiter=';')
@@ -92,15 +92,15 @@ def write_unbound(domains: list[str], path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description='Convert official Italian blacklists to Unbound local-zone format.'
+        description='Converte le blacklist ufficiali italiane in formato Unbound local-zone.'
     )
-    parser.add_argument('-i', '--input',     required=True, help='Input file')
-    parser.add_argument('-o', '--output',    required=True, help='Output .conf file')
+    parser.add_argument('-i', '--input',     required=True, help='File di input')
+    parser.add_argument('-o', '--output',    required=True, help='File .conf di output')
     parser.add_argument('-f', '--format',    required=True,
                         choices=['plain', 'cncpo'],
-                        help='Input format: plain (domains/hosts/URLs) or cncpo (CSV col 2)')
+                        help='Formato di input: plain (domini/hosts/URL) o cncpo (CSV col 2)')
     parser.add_argument('-w', '--whitelist', metavar='FILE',
-                        help='Optional whitelist (one domain per line)')
+                        help='Whitelist opzionale (un dominio per riga)')
     args = parser.parse_args()
 
     in_path  = Path(args.input)

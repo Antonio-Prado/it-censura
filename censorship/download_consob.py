@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Download the CONSOB list of blocked financial websites.
+Scarica la lista CONSOB dei siti finanziari oscurati.
 
-Iterates the CONSOB public "oscuramenti" pages, extracts domain names from
-the free-text blocks that describe each blocking order, and writes one
-domain per line to the output file.
+Scorre le pagine pubbliche degli "oscuramenti" CONSOB, estrae i nomi di dominio
+dai blocchi di testo libero che descrivono ogni ordine di oscuramento, e scrive
+un dominio per riga nel file di output.
 """
 
 import argparse
@@ -81,9 +81,9 @@ def scrape() -> list[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Download CONSOB list of blocked financial websites."
+        description="Scarica la lista CONSOB dei siti finanziari oscurati."
     )
-    parser.add_argument("-o", "--output", required=True, help="Output file path")
+    parser.add_argument("-o", "--output", required=True, help="Percorso del file di output")
     args = parser.parse_args()
 
     domains = scrape()

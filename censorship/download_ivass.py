@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Download the IVASS list of abusive insurance/broker websites.
+Scarica la lista IVASS dei siti assicurativi/broker abusivi.
 
-Iterates the IVASS "siti abusivi" index, collects PDF links (ivcs*.pdf),
-extracts domains from each PDF via visible text and hyperlink annotations,
-and writes one domain per line to the output file.
+Scorre l'indice "siti abusivi" IVASS, raccoglie i link ai PDF (ivcs*.pdf),
+estrae i domini da ciascun PDF tramite testo visibile e annotazioni di collegamento,
+e scrive un dominio per riga nel file di output.
 """
 
 import argparse
@@ -41,7 +41,7 @@ def _normalize(raw: str) -> str | None:
 
 
 def get_pdf_urls() -> list[str]:
-    """Return all ivcs*.pdf URLs from the IVASS index (all pages)."""
+    """Restituisce tutti gli URL ivcs*.pdf dall'indice IVASS (tutte le pagine)."""
     urls: list[str] = []
     seen: set[str] = set()
     page = 1
@@ -105,9 +105,9 @@ def extract_from_pdf(pdf_bytes: bytes) -> set[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Download IVASS list of abusive insurance/broker websites."
+        description="Scarica la lista IVASS dei siti assicurativi/broker abusivi."
     )
-    parser.add_argument("-o", "--output", required=True, help="Output file path")
+    parser.add_argument("-o", "--output", required=True, help="Percorso del file di output")
     args = parser.parse_args()
 
     pdf_urls = get_pdf_urls()
