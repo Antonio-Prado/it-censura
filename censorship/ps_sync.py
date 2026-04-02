@@ -136,6 +136,31 @@ def _headers() -> dict:
     return {"Authorization": f"Bearer {get_token()}"}
 
 
+# ── Pre-flight check ───────────────────────────────────────────────────────────
+
+def _check_connectivity() -> None:
+    """Verifica che la piattaforma sia raggiungibile prima di procedere.
+
+    Un fallimento di connessione indica quasi sempre che la VPN non è attiva.
+    """
+    try:
+        requests.get(f"{PS_URL}/v1/ping", verify=False, timeout=10)
+    except requests.exceptions.ConnectionError:
+        _log(
+            "Errore: impossibile raggiungere la piattaforma Piracy Shield.\n"
+            "  Verificare che la VPN site-to-site verso Azure sia attiva.\n"
+            f"  Endpoint: {PS_URL}\n"
+            "  Diagnosi: sh vpn/ps_vpn_check.sh"
+        )
+        sys.exit(1)
+    except requests.exceptions.Timeout:
+        _log(
+            "Errore: timeout nella connessione alla piattaforma Piracy Shield.\n"
+            "  La VPN è attiva ma la piattaforma non risponde."
+        )
+        sys.exit(1)
+
+
 # ── Gestione stato locale ──────────────────────────────────────────────────────
 
 def _load_state() -> dict:
@@ -247,6 +272,7 @@ def main() -> None:
         _log(f"Errore: variabili d'ambiente mancanti: {', '.join(missing)}")
         sys.exit(1)
 
+    _check_connectivity()
     state = _load_state()
     errors = 0
 

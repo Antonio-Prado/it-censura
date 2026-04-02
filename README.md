@@ -281,6 +281,53 @@ Piracy Shield è la piattaforma AGCOM per il blocco in tempo reale di siti che v
 Gli ISP accreditati ricevono ticket contenenti FQDN da bloccare via DNS e indirizzi IP da bloccare via BGP blackhole,
 con uno SLA di 30 minuti dall'apertura del ticket.
 
+### VPN site-to-site (FreeBSD + StrongSwan)
+
+L'accesso alla piattaforma richiede una VPN IPsec site-to-site tra il router dell'ISP e
+l'infrastruttura Azure di AGCOM. La connessione viene configurata una volta sola, in
+collaborazione con AGCOM, e rimane attiva in modo permanente.
+
+#### Parametri scambiati con AGCOM
+
+| Parametro | Fornito da | Variabile |
+|-----------|-----------|-----------|
+| IP pubblico dispositivo VPN ISP | ISP → AGCOM | `VPN_LOCAL_IP` |
+| Rete on-premises ISP (CIDR) | ISP → AGCOM | `VPN_LOCAL_NET` |
+| IP gateway VPN Azure | AGCOM → ISP | `VPN_AZURE_GW_IP` |
+| Rete virtuale Azure (CIDR) | AGCOM → ISP | `VPN_AZURE_NET` |
+| Chiave condivisa (PSK) | AGCOM → ISP | `VPN_PSK` |
+
+#### Configurazione e avvio
+
+```sh
+VPN_LOCAL_IP=203.0.113.1 \
+VPN_LOCAL_NET=192.168.0.0/24 \
+VPN_AZURE_GW_IP=20.10.20.30 \
+VPN_AZURE_NET=10.0.0.0/16 \
+VPN_PSK=chiave_segreta_agcom \
+sh vpn/ps_vpn_setup.sh
+```
+
+Lo script:
+1. Installa StrongSwan via `pkg` se non già presente
+2. Scrive `/usr/local/etc/ipsec.conf` e `/usr/local/etc/ipsec.secrets` (`chmod 600`)
+3. Aggiunge `strongswan_enable="YES"` a `/etc/rc.conf`
+4. Avvia (o riavvia) il servizio
+
+#### Verifica stato VPN
+
+```sh
+sh vpn/ps_vpn_check.sh
+```
+
+Controlla che il servizio sia attivo, che il tunnel risulti `ESTABLISHED` e che
+l'host API sia raggiungibile. In caso di problemi stampa suggerimenti diagnostici.
+
+#### Avvio automatico al boot
+
+Il flag `strongswan_enable="YES"` in `/etc/rc.conf` garantisce il riavvio automatico
+del tunnel ad ogni reboot del sistema.
+
 Lo script `censorship/ps_sync.py` si integra nella stessa architettura degli altri script: nessun database,
 nessuna VM, solo file di testo e variabili d'ambiente.
 
