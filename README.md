@@ -508,3 +508,7 @@ Tutti gli endpoint richiedono autenticazione.
 | `POST` | `/api/reload` | Ricarica il servizio Unbound |
 | `POST` | `/api/update` | Avvia l'aggiornamento completo delle liste (output in streaming) |
 | `GET` | `/api/update/status` | Verifica lo stato dell'aggiornamento in corso |
+
+## Licenza
+
+Questo progetto è distribuito sotto licenza MIT. Vedi il file `LICENSE`.
