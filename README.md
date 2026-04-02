@@ -275,6 +275,114 @@ python3 app.py
 
 ---
 
+## Piracy Shield
+
+Piracy Shield è la piattaforma AGCOM per il blocco in tempo reale di siti che violano il diritto d'autore.
+Gli ISP accreditati ricevono ticket contenenti FQDN da bloccare via DNS e indirizzi IP da bloccare via BGP blackhole,
+con uno SLA di 30 minuti dall'apertura del ticket.
+
+Lo script `censorship/ps_sync.py` si integra nella stessa architettura degli altri script: nessun database,
+nessuna VM, solo file di testo e variabili d'ambiente.
+
+### Prerequisiti
+
+- Accreditamento AGCOM completato (credenziali email + password ricevute via PEC)
+- Connessione VPN site-to-site attiva verso l'infrastruttura Azure di Piracy Shield
+- Per il BGP blackhole: OpenBGPD installato e configurato con un peer iBGP
+
+### Cosa produce
+
+| File | Contenuto | Utilizzato da |
+|------|-----------|---------------|
+| `PS.conf` | Domini in formato `always_nxdomain` | Unbound (scoperto automaticamente dall'interfaccia web) |
+| `ps_ipv4.txt` | Un IPv4 per riga | `ps_bgp_push.sh` / BGP daemon |
+| `ps_ipv6.txt` | Un IPv6 per riga | `ps_bgp_push.sh` / BGP daemon |
+
+### Esecuzione manuale
+
+```sh
+PS_URL=https://psp01.agcom.it/api \
+PS_EMAIL=utente@isp.it \
+PS_PASSWORD=password_sicura \
+PS_FQDN_CONF=/usr/local/etc/unbound/blacklists.d/PS.conf \
+PS_IPV4_FILE=/etc/unbound/blacklists/ps_ipv4.txt \
+PS_IPV6_FILE=/etc/unbound/blacklists/ps_ipv6.txt \
+python3 censorship/ps_sync.py
+```
+
+Dopo la sincronizzazione DNS, ricaricare Unbound e aggiornare il BGP:
+
+```sh
+service unbound reload
+sh censorship/ps_bgp_push.sh
+```
+
+### Variabili di configurazione
+
+| Variabile | Default | Descrizione |
+|-----------|---------|-------------|
+| `PS_URL` | *(obbligatoria)* | URL base API (`https://psp01.agcom.it/api` in produzione, `https://psp01-dev.agcom.it/api` in test) |
+| `PS_EMAIL` | *(obbligatoria)* | Email di accesso alla piattaforma |
+| `PS_PASSWORD` | *(obbligatoria)* | Password di accesso |
+| `PS_TOKEN_FILE` | `~/.ps_tokens.json` | File dove salvare i token JWT tra un'esecuzione e l'altra (`chmod 600`) |
+| `PS_STATE_FILE` | `~/.ps_state.json` | File dove salvare gli item già processati per rilevare i duplicati (`chmod 600`) |
+| `PS_FQDN_CONF` | `/usr/local/etc/unbound/blacklists.d/PS.conf` | Output Unbound per i domini |
+| `PS_IPV4_FILE` | `/etc/unbound/blacklists/ps_ipv4.txt` | Output IPv4 per BGP blackhole |
+| `PS_IPV6_FILE` | `/etc/unbound/blacklists/ps_ipv6.txt` | Output IPv6 per BGP blackhole |
+| `PS_MARK_PROCESSED` | `true` | Se inviare il feedback di stato all'API dopo ogni sincronizzazione |
+
+### Gestione automatica dei token
+
+Lo script gestisce autonomamente il ciclo di vita dei token JWT:
+- **Access token** (durata 1h): rinnovato automaticamente tramite il refresh token
+- **Refresh token** (durata 7gg): alla scadenza viene eseguito un nuovo login con le credenziali
+- I token sono salvati in `PS_TOKEN_FILE` con permessi `600`; il login avviene solo quando necessario
+
+### Logica di stato (processed / ALREADY_BLOCKED)
+
+Per ogni ticket degli ultimi 48 ore lo script invia ad AGCOM il feedback di elaborazione:
+- **`processed`** — item mai visto in precedenza: blocco applicato per la prima volta
+- **`ALREADY_BLOCKED`** — item già presente in un ticket precedente: era già bloccato
+
+Lo stato locale è mantenuto in `PS_STATE_FILE` (set di tutti gli FQDN e IP mai processati).
+
+### Aggiornamento automatico
+
+Aggiungere una voce cron per eseguire la sincronizzazione ogni 20 minuti
+(il ticket ha una finestra SLA di 30 minuti):
+
+```sh
+*/20 * * * *  root \
+  PS_URL=https://psp01.agcom.it/api \
+  PS_EMAIL=utente@isp.it \
+  PS_PASSWORD=password_sicura \
+  PS_FQDN_CONF=/usr/local/etc/unbound/blacklists.d/PS.conf \
+  PS_IPV4_FILE=/etc/unbound/blacklists/ps_ipv4.txt \
+  PS_IPV6_FILE=/etc/unbound/blacklists/ps_ipv6.txt \
+  python3 /opt/it-censura/censorship/ps_sync.py \
+  && service unbound reload \
+  && sh /opt/it-censura/censorship/ps_bgp_push.sh \
+  >> /var/log/ps_sync.log 2>&1
+```
+
+### BGP blackhole con OpenBGPD
+
+Lo script `ps_bgp_push.sh` usa `bgpctl` per caricare gli IP in OpenBGPD:
+
+```sh
+PS_IPV4_FILE=/etc/unbound/blacklists/ps_ipv4.txt \
+PS_IPV6_FILE=/etc/unbound/blacklists/ps_ipv6.txt \
+sh censorship/ps_bgp_push.sh
+```
+
+Lo script esegue `bgpctl network flush` prima di ricaricare, così rimuove automaticamente
+gli IP che AGCOM ha eliminato da ticket precedenti.
+Per daemon BGP diversi da OpenBGPD (Bird, FRR, ExaBGP) è sufficiente adattare
+`ps_bgp_push.sh` alla sintassi del proprio daemon, usando `ps_ipv4.txt` e `ps_ipv6.txt`
+come sorgente.
+
+---
+
 ## Gestione utenti
 
 ```sh
