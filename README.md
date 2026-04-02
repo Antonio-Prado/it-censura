@@ -3,20 +3,22 @@
 Software per la gestione della censura DNS di Stato da parte di ISP e operatori di rete italiani.
 
 Automatizza il download e la conversione delle blacklist ufficiali imposte dalle autorità italiane
-(CNCPO, ADM, AGCOM, CONSOB, IVASS), le integra nel resolver [Unbound](https://nlnetlabs.nl/projects/unbound/)
-e mette a disposizione un'interfaccia web per la ricerca, il monitoraggio e la gestione manuale dei domini bloccati.
+(CNCPO, ADM, AGCOM, CONSOB, IVASS), integra la piattaforma **Piracy Shield** di AGCOM per il blocco
+in tempo reale, e mette a disposizione un'interfaccia web per la ricerca, il monitoraggio e la
+gestione manuale dei domini bloccati.
 
 ## Componenti
 
-Il progetto è composto da due componenti indipendenti:
-
 | Componente | Percorso | Funzione |
 |------------|----------|----------|
-| **Script di aggiornamento** | `censorship/` | Scaricano e convertono le blacklist ufficiali in formato Unbound |
+| **Script blacklist ufficiali** | `censorship/update.sh` | Scarica e converte le blacklist delle autorità italiane in formato Unbound |
+| **Sincronizzazione Piracy Shield** | `censorship/ps_sync.py` | Preleva FQDN e IP da Piracy Shield, aggiorna Unbound e i file per BGP blackhole |
+| **BGP blackhole** | `censorship/ps_bgp_push.sh` | Carica gli IP Piracy Shield in OpenBGPD |
+| **VPN Piracy Shield** | `vpn/` | Configura la VPN IPsec verso Azure (FreeBSD + StrongSwan) |
 | **Interfaccia web** | `app.py` + `templates/` | Ricerca domini, gestione lista manuale, monitoraggio liste attive |
 
-I due componenti comunicano tramite filesystem: gli script scrivono i file `.conf` che Unbound carica,
-e l'interfaccia web legge quegli stessi file.
+Tutti i componenti comunicano tramite filesystem: gli script scrivono i file `.conf` che Unbound
+carica, e l'interfaccia web legge quegli stessi file.
 
 ---
 
@@ -26,6 +28,7 @@ e l'interfaccia web legge quegli stessi file.
 - [Unbound](https://nlnetlabs.nl/projects/unbound/) come resolver DNS
 - `curl` (per il download delle liste ADM in `update.sh`)
 - FreeBSD o Linux
+- **Solo per Piracy Shield:** StrongSwan (VPN), OpenBGPD (BGP blackhole)
 
 ---
 
@@ -41,7 +44,7 @@ pip install flask flask-login
 # oppure su FreeBSD:
 # pkg install py311-flask py311-flask-login
 
-# 3. Dipendenze script di aggiornamento
+# 3. Dipendenze script di aggiornamento e Piracy Shield
 pip install requests beautifulsoup4 tldextract urlextract pypdf
 
 # 4. Crea le directory di lavoro
@@ -62,6 +65,8 @@ mkdir -p /usr/local/etc/unbound/blacklists.d
     raw_ivass.txt
     manual.txt                         ← lista manuale (gestita dall'interfaccia web)
     whitelist.txt                      ← domini esclusi da tutti i blocchi
+    ps_ipv4.txt                        ← IP Piracy Shield per BGP blackhole
+    ps_ipv6.txt
 
 /usr/local/etc/unbound/blacklists.d/   ← CONF_DIR (directory include di Unbound)
     CNCPO.conf
@@ -71,6 +76,7 @@ mkdir -p /usr/local/etc/unbound/blacklists.d
     CONSOB.conf
     IVASS.conf
     MANUAL.conf
+    PS.conf                            ← domini Piracy Shield
 ```
 
 ---
@@ -106,6 +112,7 @@ Gli script supportano nativamente le seguenti liste obbligatorie per legge:
 | `AGCOM` | AGCOM | Violazione del diritto d'autore | Scaricata dal sito AGCOM |
 | `CONSOB` | CONSOB | Servizi finanziari abusivi | Estratta dal sito CONSOB |
 | `IVASS` | IVASS | Intermediari assicurativi abusivi | Estratta dai PDF IVASS |
+| `PS` | AGCOM (Piracy Shield) | Pirateria audiovisiva in tempo reale | API Piracy Shield (VPN richiesta) |
 | `MANUAL` | — | Provvedimenti giudiziari e blocchi manuali | Gestita dall'interfaccia web |
 
 ---
@@ -162,9 +169,9 @@ Tutta la configurazione avviene tramite variabili d'ambiente. Non sono necessari
 | `BL_DIR` | `/etc/unbound/blacklists` | Directory delle blacklist. L'interfaccia scopre automaticamente tutti i file `.conf`, `.txt`, `.csv` presenti. |
 | `MANUAL_LIST` | `$BL_DIR/manual.txt` | File di testo per i blocchi manuali |
 | `WHITELIST` | `$BL_DIR/whitelist.txt` | Domini esclusi da tutti i blocchi |
-| `APPLY_CMD` | *(vuoto)* | Comando eseguito dopo ogni modifica alla lista manuale o alla whitelist (es. rigenera `MANUAL.conf` e ricarica Unbound) |
+| `APPLY_CMD` | *(vuoto)* | Comando eseguito dopo ogni modifica alla lista manuale o alla whitelist |
 | `UPDATE_CMD` | *(vuoto)* | Comando eseguito al click su "Aggiorna liste" nell'interfaccia |
-| `OFFICIAL_LISTS` | `AAMS,ADMT,CNCPO,AGCOM,CONSOB,IVASS` | Nomi delle liste mostrate con il badge "ufficiale" (corrisponde al nome del file `.conf` senza estensione) |
+| `OFFICIAL_LISTS` | `AAMS,ADMT,CNCPO,AGCOM,CONSOB,IVASS` | Nomi delle liste mostrate con il badge "ufficiale" |
 | `UNBOUND_SERVICE` | `unbound` | Nome del servizio per `service <nome> reload` |
 | `PORT` | `5000` | Porta HTTP |
 | `USERS_FILE` | `<dir_app>/users.json` | File credenziali utenti (generato da `manage_users.py`) |
@@ -177,9 +184,33 @@ Tutta la configurazione avviene tramite variabili d'ambiente. Non sono necessari
 | `BL_DIR` | `/etc/unbound/blacklists` | Directory di lavoro per i file scaricati |
 | `CONF_DIR` | `/usr/local/etc/unbound/blacklists.d` | Directory di output per i file `.conf` generati |
 | `WHITELIST` | `$BL_DIR/whitelist.txt` | Domini da escludere da tutte le liste |
-| `CNCPO_FILE` | *(vuoto)* | Percorso del CSV CNCPO. La lista non è scaricabile pubblicamente: viene distribuita agli ISP tramite canale dedicato. |
-| `AAMS_URL` | *(vuoto)* | URL della blacklist ADM giochi (lista in formato testo). L'URL corrente va recuperato dal portale [ADM](https://www.adm.gov.it), sezione Giochi → elenco siti non autorizzati. |
-| `ADMT_URL` | *(vuoto)* | URL della blacklist ADM tabacchi (lista in formato testo). L'URL corrente va recuperato dal portale [ADM](https://www.adm.gov.it), sezione Tabacchi → elenco siti non autorizzati. |
+| `CNCPO_FILE` | *(vuoto)* | Percorso del CSV CNCPO. Non scaricabile pubblicamente: distribuita agli ISP tramite canale dedicato. |
+| `AAMS_URL` | *(vuoto)* | URL blacklist ADM giochi. Recuperare dal portale [ADM](https://www.adm.gov.it), sezione Giochi. |
+| `ADMT_URL` | *(vuoto)* | URL blacklist ADM tabacchi. Recuperare dal portale [ADM](https://www.adm.gov.it), sezione Tabacchi. |
+
+### Sincronizzazione Piracy Shield (`censorship/ps_sync.py`)
+
+| Variabile | Default | Descrizione |
+|-----------|---------|-------------|
+| `PS_URL` | *(obbligatoria)* | URL base API (`https://psp01.agcom.it/api` in produzione, `https://psp01-dev.agcom.it/api` in test) |
+| `PS_EMAIL` | *(obbligatoria)* | Email di accesso alla piattaforma |
+| `PS_PASSWORD` | *(obbligatoria)* | Password di accesso |
+| `PS_TOKEN_FILE` | `~/.ps_tokens.json` | File dove salvare i token JWT tra un'esecuzione e l'altra (`chmod 600`) |
+| `PS_STATE_FILE` | `~/.ps_state.json` | File dove salvare gli item già processati per rilevare i duplicati (`chmod 600`) |
+| `PS_FQDN_CONF` | `/usr/local/etc/unbound/blacklists.d/PS.conf` | Output Unbound per i domini |
+| `PS_IPV4_FILE` | `/etc/unbound/blacklists/ps_ipv4.txt` | Output IPv4 per BGP blackhole |
+| `PS_IPV6_FILE` | `/etc/unbound/blacklists/ps_ipv6.txt` | Output IPv6 per BGP blackhole |
+| `PS_MARK_PROCESSED` | `true` | Se inviare il feedback di stato all'API dopo ogni sincronizzazione |
+
+### VPN Piracy Shield (`vpn/ps_vpn_setup.sh`)
+
+| Variabile | Fornito da | Descrizione |
+|-----------|-----------|-------------|
+| `VPN_LOCAL_IP` | ISP → AGCOM | IP pubblico del dispositivo VPN dell'ISP |
+| `VPN_LOCAL_NET` | ISP → AGCOM | Rete on-premises ISP in notazione CIDR (es. `192.168.0.0/24`) |
+| `VPN_AZURE_GW_IP` | AGCOM → ISP | IP del gateway VPN Azure |
+| `VPN_AZURE_NET` | AGCOM → ISP | Rete virtuale Azure in notazione CIDR (es. `10.0.0.0/16`) |
+| `VPN_PSK` | AGCOM → ISP | Chiave condivisa (Pre-Shared Key) |
 
 ---
 
@@ -196,7 +227,8 @@ I domini presenti in `WHITELIST` vengono esclusi da tutte le liste al momento de
 ## Lista manuale e provvedimenti giudiziari
 
 La lista `MANUAL` è un file di testo (`BL_DIR/manual.txt`) modificabile dall'interfaccia web.
-Ogni volta che viene modificata, l'interfaccia esegue `APPLY_CMD`, che deve rigenerare `MANUAL.conf` e ricaricare Unbound.
+Ogni volta che viene modificata, l'interfaccia esegue `APPLY_CMD`, che deve rigenerare `MANUAL.conf`
+e ricaricare Unbound.
 
 Esempio di `APPLY_CMD`:
 
@@ -277,27 +309,29 @@ python3 app.py
 
 ## Piracy Shield
 
-Piracy Shield è la piattaforma AGCOM per il blocco in tempo reale di siti che violano il diritto d'autore.
-Gli ISP accreditati ricevono ticket contenenti FQDN da bloccare via DNS e indirizzi IP da bloccare via BGP blackhole,
-con uno SLA di 30 minuti dall'apertura del ticket.
+Piracy Shield è la piattaforma AGCOM per il blocco in tempo reale di siti che violano il diritto
+d'autore. Gli ISP accreditati ricevono ticket contenenti FQDN da bloccare via DNS e indirizzi IP
+da bloccare via BGP blackhole, con uno SLA di 30 minuti dall'apertura del ticket.
 
-### VPN site-to-site (FreeBSD + StrongSwan)
+L'integrazione in it-censura non richiede database, VM o container: usa gli stessi file di testo
+e variabili d'ambiente degli altri script.
 
-L'accesso alla piattaforma richiede una VPN IPsec site-to-site tra il router dell'ISP e
-l'infrastruttura Azure di AGCOM. La connessione viene configurata una volta sola, in
-collaborazione con AGCOM, e rimane attiva in modo permanente.
+### 1. Accreditamento
 
-#### Parametri scambiati con AGCOM
+L'accesso alla piattaforma richiede un accreditamento preliminare presso AGCOM:
 
-| Parametro | Fornito da | Variabile |
-|-----------|-----------|-----------|
-| IP pubblico dispositivo VPN ISP | ISP → AGCOM | `VPN_LOCAL_IP` |
-| Rete on-premises ISP (CIDR) | ISP → AGCOM | `VPN_LOCAL_NET` |
-| IP gateway VPN Azure | AGCOM → ISP | `VPN_AZURE_GW_IP` |
-| Rete virtuale Azure (CIDR) | AGCOM → ISP | `VPN_AZURE_NET` |
-| Chiave condivisa (PSK) | AGCOM → ISP | `VPN_PSK` |
+1. Accedere al Portale APS con SPID o CIE
+2. Compilare il modulo di accreditamento con i dati dell'azienda
+3. Attendere la conferma via PEC — le credenziali (email + password) vengono comunicate
+   nella stessa comunicazione, separatamente per ambiente di test e di produzione
 
-#### Configurazione e avvio
+### 2. VPN site-to-site (FreeBSD + StrongSwan)
+
+La piattaforma è raggiungibile solo tramite VPN IPsec site-to-site verso l'infrastruttura
+Azure di AGCOM. La connessione viene configurata una volta sola e rimane attiva in modo permanente.
+
+AGCOM invia all'ISP un modulo cifrato richiedendo i parametri locali; una volta ricevuti i
+parametri Azure, si configura la VPN con:
 
 ```sh
 VPN_LOCAL_IP=203.0.113.1 \
@@ -308,44 +342,23 @@ VPN_PSK=chiave_segreta_agcom \
 sh vpn/ps_vpn_setup.sh
 ```
 
-Lo script:
-1. Installa StrongSwan via `pkg` se non già presente
-2. Scrive `/usr/local/etc/ipsec.conf` e `/usr/local/etc/ipsec.secrets` (`chmod 600`)
-3. Aggiunge `strongswan_enable="YES"` a `/etc/rc.conf`
-4. Avvia (o riavvia) il servizio
+Lo script installa StrongSwan via `pkg`, scrive `/usr/local/etc/ipsec.conf` e
+`/usr/local/etc/ipsec.secrets` (entrambi `chmod 600`), abilita il servizio in
+`/etc/rc.conf` e avvia il tunnel. Al riavvio del sistema il tunnel si ristabilisce
+automaticamente.
 
-#### Verifica stato VPN
+Per verificare che la VPN sia operativa:
 
 ```sh
 sh vpn/ps_vpn_check.sh
 ```
 
-Controlla che il servizio sia attivo, che il tunnel risulti `ESTABLISHED` e che
-l'host API sia raggiungibile. In caso di problemi stampa suggerimenti diagnostici.
+Controlla che il servizio sia attivo, che il tunnel risulti `ESTABLISHED` e che l'host
+API sia raggiungibile. In caso di problemi stampa indicazioni diagnostiche.
 
-#### Avvio automatico al boot
+### 3. Sincronizzazione DNS e BGP
 
-Il flag `strongswan_enable="YES"` in `/etc/rc.conf` garantisce il riavvio automatico
-del tunnel ad ogni reboot del sistema.
-
-Lo script `censorship/ps_sync.py` si integra nella stessa architettura degli altri script: nessun database,
-nessuna VM, solo file di testo e variabili d'ambiente.
-
-### Prerequisiti
-
-- Accreditamento AGCOM completato (credenziali email + password ricevute via PEC)
-- Connessione VPN site-to-site attiva verso l'infrastruttura Azure di Piracy Shield
-- Per il BGP blackhole: OpenBGPD installato e configurato con un peer iBGP
-
-### Cosa produce
-
-| File | Contenuto | Utilizzato da |
-|------|-----------|---------------|
-| `PS.conf` | Domini in formato `always_nxdomain` | Unbound (scoperto automaticamente dall'interfaccia web) |
-| `ps_ipv4.txt` | Un IPv4 per riga | `ps_bgp_push.sh` / BGP daemon |
-| `ps_ipv6.txt` | Un IPv6 per riga | `ps_bgp_push.sh` / BGP daemon |
-
-### Esecuzione manuale
+Una volta attiva la VPN, `ps_sync.py` scarica le liste e aggiorna Unbound e i file BGP:
 
 ```sh
 PS_URL=https://psp01.agcom.it/api \
@@ -354,49 +367,40 @@ PS_PASSWORD=password_sicura \
 PS_FQDN_CONF=/usr/local/etc/unbound/blacklists.d/PS.conf \
 PS_IPV4_FILE=/etc/unbound/blacklists/ps_ipv4.txt \
 PS_IPV6_FILE=/etc/unbound/blacklists/ps_ipv6.txt \
-python3 censorship/ps_sync.py
-```
-
-Dopo la sincronizzazione DNS, ricaricare Unbound e aggiornare il BGP:
-
-```sh
-service unbound reload
+python3 censorship/ps_sync.py && \
+service unbound reload && \
 sh censorship/ps_bgp_push.sh
 ```
 
-### Variabili di configurazione
+Ad ogni esecuzione lo script:
 
-| Variabile | Default | Descrizione |
-|-----------|---------|-------------|
-| `PS_URL` | *(obbligatoria)* | URL base API (`https://psp01.agcom.it/api` in produzione, `https://psp01-dev.agcom.it/api` in test) |
-| `PS_EMAIL` | *(obbligatoria)* | Email di accesso alla piattaforma |
-| `PS_PASSWORD` | *(obbligatoria)* | Password di accesso |
-| `PS_TOKEN_FILE` | `~/.ps_tokens.json` | File dove salvare i token JWT tra un'esecuzione e l'altra (`chmod 600`) |
-| `PS_STATE_FILE` | `~/.ps_state.json` | File dove salvare gli item già processati per rilevare i duplicati (`chmod 600`) |
-| `PS_FQDN_CONF` | `/usr/local/etc/unbound/blacklists.d/PS.conf` | Output Unbound per i domini |
-| `PS_IPV4_FILE` | `/etc/unbound/blacklists/ps_ipv4.txt` | Output IPv4 per BGP blackhole |
-| `PS_IPV6_FILE` | `/etc/unbound/blacklists/ps_ipv6.txt` | Output IPv6 per BGP blackhole |
-| `PS_MARK_PROCESSED` | `true` | Se inviare il feedback di stato all'API dopo ogni sincronizzazione |
+1. Verifica la raggiungibilità della piattaforma (se fallisce, segnala che la VPN potrebbe essere giù)
+2. Scarica tutti gli FQDN → scrive `PS.conf` in formato `always_nxdomain`
+3. Scarica tutti gli IPv4 e IPv6 → scrive `ps_ipv4.txt` e `ps_ipv6.txt`
+4. Per ogni ticket degli ultimi 48 ore invia il feedback di elaborazione ad AGCOM:
+   - **`processed`** — item mai visto in precedenza
+   - **`ALREADY_BLOCKED`** — item già presente in un ticket precedente
+5. Aggiorna il file di stato locale (`PS_STATE_FILE`) con tutti gli item correnti
 
-### Gestione automatica dei token
+I token JWT vengono salvati in `PS_TOKEN_FILE` (`chmod 600`) e rinnovati automaticamente:
+l'access token (1h) tramite refresh, il refresh token (7gg) tramite nuovo login.
 
-Lo script gestisce autonomamente il ciclo di vita dei token JWT:
-- **Access token** (durata 1h): rinnovato automaticamente tramite il refresh token
-- **Refresh token** (durata 7gg): alla scadenza viene eseguito un nuovo login con le credenziali
-- I token sono salvati in `PS_TOKEN_FILE` con permessi `600`; il login avviene solo quando necessario
+### 4. BGP blackhole con OpenBGPD
 
-### Logica di stato (processed / ALREADY_BLOCKED)
+`ps_bgp_push.sh` carica gli IP in OpenBGPD tramite `bgpctl`:
 
-Per ogni ticket degli ultimi 48 ore lo script invia ad AGCOM il feedback di elaborazione:
-- **`processed`** — item mai visto in precedenza: blocco applicato per la prima volta
-- **`ALREADY_BLOCKED`** — item già presente in un ticket precedente: era già bloccato
+```sh
+sh censorship/ps_bgp_push.sh
+```
 
-Lo stato locale è mantenuto in `PS_STATE_FILE` (set di tutti gli FQDN e IP mai processati).
+Esegue `bgpctl network flush` prima di ricaricare, rimuovendo automaticamente gli IP
+che AGCOM ha revocato da ticket precedenti. Per daemon BGP diversi da OpenBGPD (Bird,
+FRR, ExaBGP) è sufficiente adattare lo script alla sintassi del proprio daemon.
 
-### Aggiornamento automatico
+### 5. Aggiornamento automatico
 
 Aggiungere una voce cron per eseguire la sincronizzazione ogni 20 minuti
-(il ticket ha una finestra SLA di 30 minuti):
+(lo SLA del ticket è 30 minuti):
 
 ```sh
 */20 * * * *  root \
@@ -411,22 +415,6 @@ Aggiungere una voce cron per eseguire la sincronizzazione ogni 20 minuti
   && sh /opt/it-censura/censorship/ps_bgp_push.sh \
   >> /var/log/ps_sync.log 2>&1
 ```
-
-### BGP blackhole con OpenBGPD
-
-Lo script `ps_bgp_push.sh` usa `bgpctl` per caricare gli IP in OpenBGPD:
-
-```sh
-PS_IPV4_FILE=/etc/unbound/blacklists/ps_ipv4.txt \
-PS_IPV6_FILE=/etc/unbound/blacklists/ps_ipv6.txt \
-sh censorship/ps_bgp_push.sh
-```
-
-Lo script esegue `bgpctl network flush` prima di ricaricare, così rimuove automaticamente
-gli IP che AGCOM ha eliminato da ticket precedenti.
-Per daemon BGP diversi da OpenBGPD (Bird, FRR, ExaBGP) è sufficiente adattare
-`ps_bgp_push.sh` alla sintassi del proprio daemon, usando `ps_ipv4.txt` e `ps_ipv6.txt`
-come sorgente.
 
 ---
 
