@@ -1,4 +1,4 @@
-# DNS Blacklist Manager
+# IT-CENSURA
 
 Software per la gestione della censura DNS di Stato da parte di ISP e operatori di rete italiani.
 
