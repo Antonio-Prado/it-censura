@@ -29,7 +29,8 @@ EXCLUDE = {"ivass.it", "governo.it", "giustizia.it", "example.com"}
 
 
 def _normalize(raw: str) -> str | None:
-    tsd, td, tsu = tldext(raw)
+    result = tldext(raw)
+    tsd, td, tsu = result.subdomain, result.domain, result.suffix
     if not td or not tsu:
         return None
     full = f"{tsd}.{td}.{tsu}" if tsd else f"{td}.{tsu}"
