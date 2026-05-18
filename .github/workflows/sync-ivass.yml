@@ -1,0 +1,47 @@
+name: Sync download_ivass.py → kit-censura
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'censorship/download_ivass.py'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout it-censura
+        uses: actions/checkout@v4
+
+      - name: Checkout fork kit-censura
+        uses: actions/checkout@v4
+        with:
+          repository: Antonio-Prado/kit-censura
+          token: ${{ secrets.KIT_CENSURA_TOKEN }}
+          path: kit-censura
+
+      - name: Copia script aggiornato
+        run: cp censorship/download_ivass.py kit-censura/download_ivass.py
+
+      - name: Push branch e apri PR
+        working-directory: kit-censura
+        env:
+          GH_TOKEN: ${{ secrets.KIT_CENSURA_TOKEN }}
+        run: |
+          git config user.name "Antonio Prado"
+          git config user.email "antonio@prado.it"
+          BRANCH="sync-ivass-${{ github.sha }}"
+          git checkout -b "$BRANCH"
+          git add download_ivass.py
+          if git diff --cached --quiet; then
+            echo "Nessuna modifica, PR non necessaria."
+            exit 0
+          fi
+          git commit -m "sync: aggiorna download_ivass.py da it-censura"
+          git push origin "$BRANCH"
+          gh pr create \
+            --repo rfc1036/kit-censura \
+            --head "Antonio-Prado:$BRANCH" \
+            --base master \
+            --title "sync: aggiorna download_ivass.py" \
+            --body "Aggiornamento automatico da [it-censura](https://github.com/Antonio-Prado/it-censura) (commit \`${{ github.sha }}\`)."
