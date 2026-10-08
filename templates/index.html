@@ -155,6 +155,42 @@
     font-size: .85rem;
   }
   .manual-item:hover { background: rgba(255,255,255,.04); }
+  .manual-item .mi-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+  .manual-item .mi-comment {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: .72rem;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .manual-item .mi-actions { display: flex; align-items: center; gap: .1rem; flex-shrink: 0; }
+  .manual-item .edit-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    padding: .15rem .4rem;
+    font-size: .9rem;
+    opacity: .45;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: opacity .15s;
+  }
+  .manual-item .edit-btn:hover { opacity: 1; background: rgba(79,142,247,.12); }
+  .manual-item.has-comment .edit-btn { opacity: .7; }
+  .manual-filter {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: .8rem;
+    padding: .35rem .6rem;
+    margin-bottom: .5rem;
+    outline: none;
+  }
+  .manual-filter:focus { border-color: var(--accent); }
   .manual-item .del-btn {
     background: none;
     border: none;
@@ -198,6 +234,7 @@
   }
   .stat-item {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     padding: .3rem .5rem;
     border-radius: 5px;
@@ -205,6 +242,34 @@
   }
   .stat-name { color: var(--text); }
   .stat-count { color: var(--muted); font-family: monospace; }
+  .stat-delta { font-family: monospace; font-size: .72rem; margin-left: .4rem; }
+  .stat-delta.up   { color: var(--success); }
+  .stat-delta.down { color: var(--danger); }
+  .stat-delta.same { color: var(--muted); }
+  .stat-meta {
+    flex-basis: 100%;
+    font-size: .68rem;
+    color: var(--muted);
+    margin-top: .1rem;
+  }
+  .stat-meta.stale { color: var(--warning); }
+  .stat-meta.missing { color: var(--danger); }
+
+  /* Stato resolver (header) */
+  .node-status { display: flex; gap: .6rem; align-items: center; }
+  .node-badge {
+    display: inline-flex; align-items: center; gap: .4rem;
+    font-size: .78rem; font-family: monospace;
+    padding: .25rem .6rem; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--muted); background: var(--bg);
+  }
+  .node-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .node-badge.online  { color: var(--success); border-color: rgba(62,207,110,.35); }
+  .node-badge.online  .dot { background: var(--success); box-shadow: 0 0 6px var(--success); }
+  .node-badge.degraded { color: var(--warning); border-color: rgba(240,160,48,.35); }
+  .node-badge.degraded .dot { background: var(--warning); }
+  .node-badge.offline { color: var(--danger); border-color: rgba(224,82,82,.4); }
+  .node-badge.offline .dot { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
 
   /* Toast */
   #toast {
@@ -275,6 +340,7 @@
     <small>Unbound / censorship — FreeBSD</small>
   </div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:1.25rem;">
+    <div class="node-status" id="node-status" title="Stato dei resolver (query DNS ogni 30 s)"></div>
     <a href="/help" style="color:var(--muted);text-decoration:none;font-size:.85rem;" title="Guida">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:.3rem;">
         <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
@@ -309,6 +375,7 @@
         <div class="domain-name" id="res-domain"></div>
         <div class="status-line" id="res-status"></div>
         <div class="tags" id="res-tags"></div>
+        <div id="res-manual-comment" style="display:none;margin-top:.4rem;font-size:.8rem;color:var(--muted);"></div>
         <button class="btn-success" id="btn-add-from-search"    style="display:none" onclick="addFromSearch()">+ Aggiungi alla blacklist manuale</button>
         <button class="btn-danger"  id="btn-remove-from-search" style="display:none" onclick="removeFromSearch()">- Rimuovi dalla blacklist manuale</button>
         <button class="btn-neutral" id="btn-whitelist-add"    style="display:none" onclick="addToWhitelist()">✓ Aggiungi alla whitelist</button>
@@ -374,10 +441,12 @@
         <span>Blacklist manuale</span>
         <span id="manual-count" style="font-size:.75rem;color:var(--muted);">0 voci</span>
       </div>
-      <div class="manual-toolbar">
-        <input type="text" id="add-input" placeholder="aggiungi dominio…" autocomplete="off" spellcheck="false">
-        <button class="btn-success" onclick="addManual()">+</button>
+      <div class="manual-toolbar" style="flex-direction:column;gap:.4rem;">
+        <textarea id="add-input" placeholder="aggiungi domini (separati da spazio, virgola o a capo)…" autocomplete="off" spellcheck="false" rows="3" style="resize:vertical;width:100%;box-sizing:border-box;font-family:monospace;font-size:.85rem;padding:.4rem .6rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;transition:border-color .2s;outline:none;" onfocus="this.style.borderColor='var(--success)'" onblur="this.style.borderColor='var(--border)'"></textarea>
+        <input type="text" id="add-comment" placeholder="commento (facoltativo, es. riferimento al provvedimento)" maxlength="200" autocomplete="off" spellcheck="false" style="font-family:inherit;font-size:.82rem;">
+        <button class="btn-success" id="btn-manual-add" style="width:100%;" onclick="addManual()">+ Aggiungi</button>
       </div>
+      <input type="text" id="manual-filter" class="manual-filter" placeholder="filtra per dominio o commento…" autocomplete="off" spellcheck="false" oninput="renderManual()">
       <div id="manual-list"><div class="loader-row"><span class="spinner"></span>Caricamento…</div></div>
     </div>
 
@@ -426,8 +495,22 @@ document.getElementById("search-input").addEventListener("keydown", e => {
   if (e.key === "Enter") searchDomain();
 });
 document.getElementById("add-input").addEventListener("keydown", e => {
+  // Invio aggiunge; Shift+Invio inserisce un a capo (l'incolla multiriga funziona comunque)
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addManual(); }
+});
+document.getElementById("add-comment").addEventListener("keydown", e => {
   if (e.key === "Enter") addManual();
 });
+
+function esc(str) {
+  return String(str ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function _fmtDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" });
+}
 document.getElementById("wl-add-input").addEventListener("keydown", e => {
   if (e.key === "Enter") addWhitelist();
 });
@@ -470,6 +553,13 @@ async function searchDomain() {
 
   const tagsEl = document.getElementById("res-tags");
   tagsEl.innerHTML = "";
+  const commentEl = document.getElementById("res-manual-comment");
+  if (data.in_manual && data.manual_comment) {
+    commentEl.innerHTML = `Commento blacklist manuale: <em>${esc(data.manual_comment)}</em>`;
+    commentEl.style.display = "block";
+  } else {
+    commentEl.style.display = "none";
+  }
 
   if (data.in_whitelist) {
     const t = document.createElement("span");
@@ -504,7 +594,8 @@ async function searchDomain() {
 
 async function addFromSearch() {
   if (!lastSearched) return;
-  const [status, data] = await api("POST", "/api/manual", { domain: lastSearched });
+  const comment = document.getElementById("add-comment").value.trim();
+  const [status, data] = await api("POST", "/api/manual", { domain: lastSearched, comment });
   if (status !== 200) { toast(data.error || "Errore", "err"); return; }
   toast(`"${lastSearched}" aggiunto alla blacklist manuale`);
   loadManual();
@@ -521,51 +612,109 @@ async function removeFromSearch() {
 }
 
 // ── Manual list ───────────────────────────────────────────────────────────────
+let _manualEntries = [];   // [{domain, comment, added_by, added_at}] dal server
+
 async function loadManual() {
   const [, data] = await api("GET", "/api/manual");
-  const listEl = document.getElementById("manual-list");
-  document.getElementById("manual-count").textContent = `${data.domains.length} voci`;
-  if (!data.domains.length) {
+  _manualEntries = data.entries || (data.domains || []).map(d => ({ domain: d, comment: "" }));
+  renderManual();
+}
+
+function renderManual() {
+  const listEl  = document.getElementById("manual-list");
+  const countEl = document.getElementById("manual-count");
+  const q = document.getElementById("manual-filter").value.trim().toLowerCase();
+  const total = _manualEntries.length;
+  const shown = q
+    ? _manualEntries.filter(e => e.domain.includes(q) || (e.comment || "").toLowerCase().includes(q))
+    : _manualEntries;
+
+  countEl.textContent = q ? `${shown.length} di ${total} voci` : `${total} voci`;
+
+  if (!total) {
     listEl.innerHTML = `<div class="manual-empty">Nessun dominio nella blacklist manuale.</div>`;
     return;
   }
-  listEl.innerHTML = data.domains.map(d => `
-    <div class="manual-item" data-domain="${d}">
-      <span>${d}</span>
-      <button class="del-btn" title="Rimuovi" onclick="deleteManual('${d}')">&#x2715;</button>
-    </div>`).join("");
+  if (!shown.length) {
+    listEl.innerHTML = `<div class="manual-empty">Nessuna voce corrisponde al filtro.</div>`;
+    return;
+  }
+  listEl.innerHTML = shown.map(e => {
+    const meta = [e.added_by, _fmtDate(e.added_at)].filter(Boolean).join(" · ");
+    const title = esc([e.comment, meta].filter(Boolean).join("\n"));
+    return `
+    <div class="manual-item${e.comment ? " has-comment" : ""}" data-domain="${e.domain}">
+      <div class="mi-main" title="${title}">
+        <span>${e.domain}</span>
+        ${e.comment ? `<span class="mi-comment">${esc(e.comment)}</span>` : ""}
+      </div>
+      <div class="mi-actions">
+        <button class="edit-btn" title="${e.comment ? "Modifica commento" : "Aggiungi commento"}" onclick="editComment('${e.domain}')">&#x270E;</button>
+        <button class="del-btn" title="Rimuovi" onclick="deleteManual('${e.domain}')">&#x2715;</button>
+      </div>
+    </div>`;
+  }).join("");
 }
 
 async function addManual() {
-  const raw = document.getElementById("add-input").value.trim().toLowerCase().replace(/\.$/, "");
-  if (!raw) return;
+  const inputEl   = document.getElementById("add-input");
+  const commentEl = document.getElementById("add-comment");
+  const btn       = document.getElementById("btn-manual-add");
+  const domains = [...new Set(inputEl.value.split(/[\s,;]+/)
+    .map(d => d.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/\.$/, ""))
+    .filter(d => d.length > 0))];
+  if (!domains.length) return;
+  const comment = commentEl.value.trim();
 
-  // Aggiunta ottimistica: inserisce subito nella lista
+  // Aggiunta ottimistica: mostra subito le righe in attesa
   const listEl = document.getElementById("manual-list");
   const emptyEl = listEl.querySelector(".manual-empty");
   if (emptyEl) emptyEl.remove();
-  const tempRow = document.createElement("div");
-  tempRow.className = "manual-item";
-  tempRow.dataset.domain = raw;
-  tempRow.style.opacity = "0.5";
-  tempRow.innerHTML = `<span>${raw}</span><span style="color:var(--muted);font-size:.75rem">…</span>`;
-  listEl.appendChild(tempRow);
+  const tempRows = domains.map(d => {
+    const row = document.createElement("div");
+    row.className = "manual-item";
+    row.dataset.domain = d;
+    row.style.opacity = "0.5";
+    row.innerHTML = `<div class="mi-main"><span>${esc(d)}</span>${comment ? `<span class="mi-comment">${esc(comment)}</span>` : ""}</div><span style="color:var(--muted);font-size:.75rem">…</span>`;
+    listEl.appendChild(row);
+    return row;
+  });
 
-  const countEl = document.getElementById("manual-count");
-  const prevCount = parseInt(countEl.textContent) || 0;
-  countEl.textContent = `${prevCount + 1} voci`;
+  inputEl.value = "";
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner" style="width:13px;height:13px;border-width:2px;margin:0"></span> Aggiunta e rigenerazione…`;
 
-  document.getElementById("add-input").value = "";
+  let status, data;
+  try {
+    [status, data] = await api("POST", "/api/manual/bulk", { domains, comment });
+  } catch (e) {
+    status = 0; data = { error: "Errore di rete" };
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "+ Aggiungi";
+  }
 
-  const [status, data] = await api("POST", "/api/manual", { domain: raw });
-  if (status !== 200) {
-    tempRow.remove();  // rimuove la riga temporanea
-    countEl.textContent = `${prevCount} voci`;
-    toast(data.error || "Errore", "err");
+  if (status !== 200 || !data) {
+    tempRows.forEach(r => r.remove());
+    toast((data && data.error) || "Errore", "err");
+    if (data && data.added && data.added.length) loadManual();
     return;
   }
-  toast(`"${raw}" aggiunto`);
-  loadManual();  // aggiorna con la lista reale dal server
+  if (data.added.length) {
+    toast(data.added.length === 1 ? `"${data.added[0]}" aggiunto` : `${data.added.length} domini aggiunti`);
+  }
+  (data.errors || []).forEach(e => toast(e, "err"));
+  loadManual();  // il commento resta nel campo per aggiunte successive con lo stesso riferimento
+}
+
+async function editComment(domain) {
+  const entry = _manualEntries.find(e => e.domain === domain) || { comment: "" };
+  const value = prompt(`Commento per "${domain}" (vuoto per rimuoverlo):`, entry.comment || "");
+  if (value === null) return;  // annullato
+  const [status, data] = await api("PATCH", `/api/manual/${encodeURIComponent(domain)}`, { comment: value.trim() });
+  if (status !== 200) { toast(data.error || "Errore", "err"); return; }
+  toast(value.trim() ? "Commento aggiornato" : "Commento rimosso");
+  loadManual();
 }
 
 async function deleteManual(domain) {
@@ -671,8 +820,11 @@ let _statsPollTimer = null;
 function _renderStats(data) {
   const grid = document.getElementById("stats-grid");
   const btn = document.querySelector('[onclick="loadStats()"]');
+  const mtimes = data._mtimes || {};
+  const synced = data._synced || {};
+  const prevs  = data._prev   || {};
   const entries = Object.entries(data)
-    .filter(([k]) => k !== "_loading")
+    .filter(([k]) => !k.startsWith("_"))
     .sort((a, b) => b[1] - a[1]);
 
   if (data._loading && entries.length === 0) {
@@ -686,11 +838,38 @@ function _renderStats(data) {
 
   // Dati disponibili (anche se in background sta ricalcolando)
   if (btn) { btn.disabled = false; btn.textContent = "Aggiorna"; }
-  grid.innerHTML = entries.map(([name, count]) => `
+  const STALE_MS = 48 * 3600 * 1000;
+  grid.innerHTML = entries.map(([name, count]) => {
+    const iso = mtimes[name];
+    let meta;
+    if (!iso) {
+      meta = `<span class="stat-meta missing">file assente</span>`;
+    } else if (synced[name] !== undefined) {
+      // Liste con configurazione generata: "sync" = ultima elaborazione;
+      // "lista del" = data del file sorgente (il download conserva il timestamp remoto)
+      const sIso = synced[name];
+      const stale = !sIso || (Date.now() - new Date(sIso).getTime()) > STALE_MS;
+      const syncTxt = sIso ? _fmtDate(sIso) : "mai";
+      meta = `<span class="stat-meta${stale ? " stale" : ""}" title="Ultima elaborazione della lista: ${syncTxt}${stale ? " (più di 48 ore fa)" : ""}\nVersione pubblicata dalla fonte: ${_fmtDate(iso)}">↻ ${syncTxt} · lista del ${_fmtDate(iso).split(",")[0]}</span>`;
+    } else {
+      const stale = (Date.now() - new Date(iso).getTime()) > STALE_MS;
+      meta = `<span class="stat-meta${stale ? " stale" : ""}" title="Ultimo aggiornamento del file${stale ? " (più di 48 ore fa)" : ""}">↻ ${_fmtDate(iso)}</span>`;
+    }
+    let delta = "";
+    const prev = prevs[name];
+    if (prev && typeof prev.count === "number") {
+      const d = count - prev.count;
+      const cls = d > 0 ? "up" : d < 0 ? "down" : "same";
+      const txt = d === 0 ? "=" : (d > 0 ? "+" : "−") + Math.abs(d).toLocaleString("it-IT");
+      delta = `<span class="stat-delta ${cls}" title="Prima dell'ultimo aggiornamento (${_fmtDate(prev.mtime)}): ${prev.count.toLocaleString("it-IT")} voci">(${txt})</span>`;
+    }
+    return `
     <div class="stat-item">
       <span class="stat-name">${name}</span>
-      <span class="stat-count">${count.toLocaleString("it-IT")}</span>
-    </div>`).join("");
+      <span><span class="stat-count">${count.toLocaleString("it-IT")}</span>${delta}</span>
+      ${meta}
+    </div>`;
+  }).join("");
 
   // Se il server sta ancora ricalcolando, aggiorna quando finisce
   if (data._loading) {
@@ -901,6 +1080,31 @@ async function pollPsSync() {
     toast("Sincronizzazione PS terminata con errori", "err");
   }
 }
+
+// ── Stato resolver (header) ──────────────────────────────────────────────────
+async function loadHealth() {
+  const box = document.getElementById("node-status");
+  if (!box) return;
+  let data = null;
+  try { [, data] = await api("GET", "/api/health"); } catch (e) { data = null; }
+  if (!data) {
+    box.innerHTML = `<span class="node-badge" title="Controllo non riuscito"><span class="dot"></span>resolver n/d</span>`;
+    return;
+  }
+  const names = data._order || Object.keys(data).filter(k => !k.startsWith("_"));
+  box.innerHTML = names.map(node => {
+    const st = data[node];
+    if (!st) return "";
+    const cls = !st.online ? "offline" : st.error ? "degraded" : "online";
+    const label = !st.online ? "offline" : st.error ? st.error : "online";
+    const title = st.online
+      ? `Risponde alle query DNS in ${st.latency_ms} ms${st.error ? " (" + st.error + ")" : ""}`
+      : `Nessuna risposta DNS: ${st.error || "irraggiungibile"}`;
+    return `<span class="node-badge ${cls}" title="${esc(title)}"><span class="dot"></span>${esc(node)} ${esc(label)}</span>`;
+  }).join("");
+}
+loadHealth();
+setInterval(loadHealth, 30000);
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadManual();

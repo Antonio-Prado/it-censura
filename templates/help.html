@@ -264,19 +264,44 @@
   <!-- Blacklist manuale -->
   <h2>Gestione blacklist manuale</h2>
   <p>
-    La blacklist manuale (<code>blacklist_manual.txt</code>) è l'unica lista modificabile direttamente.
-    Le altre liste vengono aggiornate dagli script automatici di <em>censorship</em>.
+    La blacklist manuale (file <code>MANUAL_LIST</code>, di default <code>manual.txt</code>) è l'unica lista
+    modificabile direttamente. Le altre liste vengono aggiornate dagli script automatici di <em>censorship</em>.
+    I commenti e i metadati delle voci (autore, data) sono salvati a parte in <code>manual_meta.json</code>,
+    così il file dei domini resta una semplice lista leggibile da qualsiasi script.
   </p>
 
   <div class="card">
     <div class="card-row">
       <div class="icon green">+</div>
       <div class="card-row-body">
-        <strong>Aggiungere un dominio</strong>
-        <p>Scrivi il dominio nel campo in alto a destra (es. <code>sito-da-bloccare.com</code>)
-        e premi <strong>+</strong> o <strong>Invio</strong>. Il dominio appare subito nella lista.
-        In alternativa, dopo una ricerca con esito negativo, usa il pulsante
-        <em>"Aggiungi alla blacklist manuale"</em>.</p>
+        <strong>Aggiungere uno o più domini</strong>
+        <p>Scrivi o incolla i domini nel riquadro a destra (es. <code>sito-da-bloccare.com</code>),
+        separati da spazio, virgola o a capo, e premi <strong>+ Aggiungi</strong> o <strong>Invio</strong>
+        (<strong>Shift+Invio</strong> per andare a capo). Eventuali <code>https://</code> e percorsi
+        vengono rimossi automaticamente. Tutti i domini vengono aggiunti in una sola operazione, con
+        una sola rigenerazione della configurazione. In alternativa, dopo una ricerca con esito negativo,
+        usa il pulsante <em>"Aggiungi alla blacklist manuale"</em>.</p>
+      </div>
+    </div>
+    <div class="card-row">
+      <div class="icon blue">✎</div>
+      <div class="card-row-body">
+        <strong>Commento</strong>
+        <p>Il campo <em>commento</em> (facoltativo, max 200 caratteri) viene associato a tutti i domini
+        aggiunti in quell'operazione: usalo per il riferimento al provvedimento, es.
+        <code>Decreto GIP n. 1234/2026</code>. Il commento compare sotto il dominio nella lista,
+        nel risultato della ricerca e nel log di audit. Il campo non si svuota dopo l'aggiunta, così
+        puoi inserire altri domini con lo stesso riferimento. Con la matita <strong>✎</strong> accanto a
+        una voce puoi aggiungere o modificare il commento in qualsiasi momento, senza rigenerare nulla.
+        Passando il mouse sulla voce vedi anche chi l'ha aggiunta e quando.</p>
+      </div>
+    </div>
+    <div class="card-row">
+      <div class="icon blue">⌕</div>
+      <div class="card-row-body">
+        <strong>Filtro</strong>
+        <p>Il campo <em>filtra per dominio o commento</em> restringe la lista: scrivendo il numero
+        di un provvedimento vedi tutte le voci inserite per quel riferimento.</p>
       </div>
     </div>
     <div class="card-row">
@@ -379,6 +404,35 @@
   </p>
   <p>
     Il pulsante <strong>Aggiorna</strong> forza il ricalcolo immediato.
+  </p>
+  <p>
+    Sotto ogni lista è indicato con <strong>↻</strong> l'<strong>ultimo aggiornamento</strong>.
+    Per le liste il cui file è già in formato Unbound è la data di ultima scrittura del file.
+    Per le liste scaricate ed elaborate (es. AAMS, ADMT, AGCOM, CONSOB, IVASS) e per la manuale
+    compaiono due date: la prima è l'ultima elaborazione sul server, la seconda, <em>"lista del"</em>,
+    è la data della versione pubblicata dalla fonte, perché il download conserva il timestamp del file
+    remoto. Una lista "del 23/09" elaborata oggi è quindi aggiornata: la fonte non ha pubblicato versioni
+    più recenti. Se l'ultima elaborazione risale a più di <strong>48 ore</strong> fa la riga è evidenziata
+    in arancione: è il segnale che lo script automatico non sta funzionando. <em>"file assente"</em> in
+    rosso indica che il file della lista non esiste.
+  </p>
+  <p>
+    Accanto al numero di voci compare, tra parentesi, la <strong>variazione rispetto
+    all'aggiornamento precedente</strong> della lista: in verde se le voci sono aumentate
+    (<code>(+120)</code>), in rosso se sono diminuite (<code>(−35)</code>), in grigio se invariate.
+    Passando il mouse si vedono data e conteggio del punto di confronto. La variazione compare
+    dalla seconda volta che una lista viene aggiornata dopo l'installazione di questa funzione.
+  </p>
+
+  <!-- Stato resolver -->
+  <h2>Stato dei resolver</h2>
+  <p>
+    In alto a destra un indicatore per ciascun resolver configurato in <code>HEALTH_RESOLVERS</code>
+    (di default il solo <code>localhost</code>). Ogni 30 secondi il server invia una vera query DNS a
+    ciascun nodo, con timeout di 2 secondi: <span class="tag" style="color:var(--success)">online</span>
+    se risponde (passando il mouse si vede la latenza), <span class="tag" style="color:var(--warning)">SERVFAIL</span>
+    se risponde ma non riesce a risolvere, <span class="tag" style="color:var(--danger)">offline</span>
+    se non risponde affatto. Dopo una ricarica di Unbound conviene attendere che tutti tornino verdi.
   </p>
 
   <!-- Liste blacklist -->

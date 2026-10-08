@@ -146,7 +146,15 @@ USERS_FILE   = Path(os.environ.get("USERS_FILE", APP_DIR / "users.json"))
 AUDIT_LOG    = Path(os.environ.get("AUDIT_LOG", "/var/log/dns_gui_audit.log"))
 BL_DIR       = Path(os.environ.get("BL_DIR", "/etc/unbound/blacklists"))
 MANUAL_LIST  = Path(os.environ.get("MANUAL_LIST", str(BL_DIR / "manual.txt")))
+# Metadati delle voci manuali (commento, autore, data): JSON accanto alla lista manuale,
+# che resta una semplice lista di domini leggibile da qualsiasi script.
+MANUAL_META  = Path(os.environ.get("MANUAL_META", str(MANUAL_LIST.with_name(MANUAL_LIST.stem + "_meta.json"))))
 WHITELIST    = Path(os.environ.get("WHITELIST",   str(BL_DIR / "whitelist.txt")))
+# Storico dei conteggi per lista (per mostrare la variazione rispetto all'aggiornamento precedente)
+STATS_HISTORY = Path(os.environ.get("STATS_HISTORY", str(BL_DIR / "stats_history.json")))
+# Resolver da monitorare nell'intestazione: "etichetta=host,etichetta=host"
+HEALTH_RESOLVERS = os.environ.get("HEALTH_RESOLVERS", "localhost=127.0.0.1")
+HEALTH_PROBE_NAME = os.environ.get("HEALTH_PROBE_NAME", "example.com")
 # Comandi shell opzionali (lasciare vuoto per disabilitare la funzione)
 APPLY_CMD    = os.environ.get("APPLY_CMD", "")   # eseguito dopo modifiche alla lista manuale/whitelist
 UPDATE_CMD   = os.environ.get("UPDATE_CMD", "")  # eseguito per l'aggiornamento completo delle blacklist
@@ -219,6 +227,9 @@ _stats_cache: dict = {}
 _stats_cache_ts: float = 0.0
 _stats_building = False
 STATS_CACHE_TTL = 300  # secondi
+_stats_history_lock = threading.Lock()
+_stats_prev: dict = {}          # {lista: {"count": conteggio precedente, "mtime": data precedente}}
+_manual_lock = threading.Lock()
 
 # ── Update job ────────────────────────────────────────────────────────────────
 _update_job: dict = {"status": "idle", "started": None, "ended": None, "output": ""}
@@ -259,6 +270,59 @@ def _read_manual() -> list[str]:
         return []
     with MANUAL_LIST.open(errors="replace") as f:
         return [_normalise(ln) for ln in f if ln.strip() and not ln.startswith("#")]
+
+
+MAX_COMMENT_LEN = 200
+
+
+def _clean_comment(raw) -> str | None:
+    """Normalizza un commento: spazi singoli, niente caratteri di controllo, max 200 caratteri.
+    Ritorna None se non valido."""
+    if raw is None:
+        return ""
+    text = " ".join(str(raw).split())
+    if re.search(r"[\x00-\x1f\x7f]", text) or len(text) > MAX_COMMENT_LEN:
+        return None
+    return text
+
+
+def _read_manual_meta() -> dict[str, dict]:
+    """Metadati delle voci manuali {dominio: {comment, added_by, added_at}}. Chiamare dentro _manual_lock."""
+    if not MANUAL_META.exists():
+        return {}
+    try:
+        with MANUAL_META.open(errors="replace") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError) as exc:
+        app.logger.error("Lettura %s fallita: %s", MANUAL_META, exc)
+        return {}
+
+
+def _write_manual_meta(meta: dict[str, dict]) -> None:
+    """Scrittura atomica (tmp + rename). Chiamare dentro _manual_lock."""
+    tmp = MANUAL_META.with_suffix(".json.tmp")
+    with tmp.open("w") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=1, sort_keys=True)
+    os.replace(tmp, MANUAL_META)
+
+
+def _manual_entries() -> list[dict]:
+    """Voci manuali ordinate con metadati. Chiamare dentro _manual_lock."""
+    meta = _read_manual_meta()
+    out = []
+    for d in sorted(_read_manual()):
+        m = meta.get(d, {})
+        out.append({"domain": d, "comment": m.get("comment", ""),
+                    "added_by": m.get("added_by", ""), "added_at": m.get("added_at", "")})
+    return out
+
+
+def _current_username() -> str:
+    try:
+        return current_user.id if current_user.is_authenticated else "anonymous"
+    except Exception:
+        return "anonymous"
 
 
 def _read_whitelist() -> list[str]:
@@ -326,9 +390,130 @@ def _compute_stats_bg():
         futs = {ex.submit(_count_file, path): name for name, path in _get_blacklists().items()}
         for fut in as_completed(futs):
             stats[futs[fut]] = fut.result()
+    try:
+        _update_stats_history(stats)
+    except Exception as exc:
+        app.logger.error("Aggiornamento storico statistiche fallito: %s", exc)
     _stats_cache = stats
     _stats_cache_ts = time.monotonic()
     _stats_building = False
+
+
+def _iso_mtime(path: Path) -> str | None:
+    try:
+        ts = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).astimezone()
+        return ts.isoformat(timespec="seconds")
+    except OSError:
+        return None
+
+
+def _blacklist_mtimes() -> dict[str, str | None]:
+    """Data di ultima scrittura di ogni file lista (None se assente). Per i file scaricati con
+    wget/curl che conservano il timestamp remoto, e' la data di pubblicazione della fonte."""
+    return {name: _iso_mtime(path) for name, path in _get_blacklists().items()}
+
+
+def _blacklist_synced() -> dict[str, str | None]:
+    """Per le liste che hanno una configurazione Unbound generata in UNBOUND_CONF_DIR
+    (<NOME>.conf, es. AGCOM.conf o MANUAL.conf): data dell'ultima elaborazione.
+    Le liste gia' in formato .conf non compaiono (la data del file e' gia' quella)."""
+    out: dict[str, str | None] = {}
+    conf_dir = Path(UNBOUND_CONF_DIR)
+    for name, path in _get_blacklists().items():
+        if path.suffix == ".conf":
+            continue
+        base = name[4:] if name.startswith("raw_") else name
+        for cand in (base, base.upper(), base.lower(), name):
+            conf = conf_dir / f"{cand}.conf"
+            if conf.exists():
+                out[name] = _iso_mtime(conf)
+                break
+    return out
+
+
+def _update_stats_history(stats: dict) -> None:
+    """Storico conteggi: quando cambia l'mtime del file di una lista, il conteggio precedente
+    viene conservato in prev_count. Popola _stats_prev per /api/stats."""
+    global _stats_prev
+    mtimes = _blacklist_mtimes()
+    with _stats_history_lock:
+        hist: dict = {}
+        if STATS_HISTORY.exists():
+            try:
+                hist = json.loads(STATS_HISTORY.read_text())
+                if not isinstance(hist, dict):
+                    hist = {}
+            except (OSError, ValueError):
+                hist = {}
+        for name, count in stats.items():
+            if name.startswith("_"):
+                continue
+            mt = mtimes.get(name)
+            h = hist.get(name)
+            if not isinstance(h, dict):
+                hist[name] = {"mtime": mt, "count": count, "prev_count": None, "prev_mtime": None}
+            elif h.get("mtime") != mt:
+                hist[name] = {"mtime": mt, "count": count,
+                              "prev_count": h.get("count"), "prev_mtime": h.get("mtime")}
+            else:
+                h["count"] = count
+        tmp = STATS_HISTORY.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(hist, indent=1, sort_keys=True))
+        os.replace(tmp, STATS_HISTORY)
+        _stats_prev = {n: {"count": h.get("prev_count"), "mtime": h.get("prev_mtime")}
+                       for n, h in hist.items() if h.get("prev_count") is not None}
+
+
+# ── Stato dei resolver (query DNS reale via UDP, timeout breve) ───────────────
+HEALTH_TIMEOUT = 2.0
+
+
+def _dns_probe(host: str, timeout: float = HEALTH_TIMEOUT) -> dict:
+    """Invia una query A per HEALTH_PROBE_NAME a host:53 e misura la latenza.
+    Ritorna {"online": bool, "latency_ms": int|None, "error": str|None}."""
+    import socket
+    import struct
+    qid = secrets.randbits(16)
+    header = struct.pack("!HHHHHH", qid, 0x0100, 1, 0, 0, 0)   # flag RD
+    qname = b"".join(bytes([len(l)]) + l.encode() for l in HEALTH_PROBE_NAME.split(".")) + b"\x00"
+    query = header + qname + struct.pack("!HH", 1, 1)         # tipo A, classe IN
+    start = time.monotonic()
+    try:
+        infos = socket.getaddrinfo(host, 53, socket.AF_UNSPEC, socket.SOCK_DGRAM)
+        if not infos:
+            return {"online": False, "latency_ms": None, "error": "host non risolvibile"}
+        family, socktype, proto, _, addr = infos[0]
+        with socket.socket(family, socktype, proto) as sock:
+            sock.settimeout(timeout)
+            sock.sendto(query, addr)
+            while True:
+                data, _ = sock.recvfrom(4096)
+                if len(data) >= 12 and struct.unpack("!H", data[:2])[0] == qid:
+                    break
+        rcode = struct.unpack("!H", data[2:4])[0] & 0x000F
+        ms = int((time.monotonic() - start) * 1000)
+        if rcode == 2:   # SERVFAIL: risponde ma non risolve
+            return {"online": True, "latency_ms": ms, "error": "SERVFAIL"}
+        return {"online": True, "latency_ms": ms, "error": None}
+    except socket.timeout:
+        return {"online": False, "latency_ms": None, "error": "timeout"}
+    except OSError as exc:
+        return {"online": False, "latency_ms": None, "error": str(exc)}
+
+
+def _health_targets() -> dict[str, str]:
+    targets: dict[str, str] = {}
+    for item in HEALTH_RESOLVERS.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        label, _, host = item.partition("=")
+        label, host = label.strip(), host.strip()
+        if label and host:
+            targets[label] = host
+        elif label:
+            targets[label] = label
+    return targets
 
 
 # ── Auth routes ───────────────────────────────────────────────────────────────
@@ -446,11 +631,16 @@ def api_search():
                 found_in.append(result)
 
     in_whitelist = domain in _read_whitelist()
+    manual_comment = ""
+    if "manual" in found_in:
+        with _manual_lock:
+            manual_comment = _read_manual_meta().get(domain, {}).get("comment", "")
     return jsonify({
         "domain": domain,
         "found": bool(found_in),
         "lists": sorted(found_in),
         "in_manual": "manual" in found_in,
+        "manual_comment": manual_comment,
         "in_whitelist": in_whitelist,
     })
 
@@ -458,7 +648,45 @@ def api_search():
 @app.route("/api/manual", methods=["GET"])
 @login_required
 def api_manual_list():
-    return jsonify({"domains": sorted(_read_manual())})
+    with _manual_lock:
+        entries = _manual_entries()
+    return jsonify({"domains": [e["domain"] for e in entries], "entries": entries})
+
+
+def _manual_add_many(raw_domains: list, raw_comment) -> tuple[list[str], list[str], str | None]:
+    """Aggiunge più domini alla lista manuale con lo stesso commento.
+    Ritorna (aggiunti, errori, errore_fatale)."""
+    comment = _clean_comment(raw_comment)
+    if comment is None:
+        return [], [], f"Commento non valido (max {MAX_COMMENT_LEN} caratteri, niente caratteri di controllo)"
+    added: list[str] = []
+    errors: list[str] = []
+    with _manual_lock:
+        existing_set = set(_read_manual())
+        for raw in raw_domains:
+            domain = _normalise(str(raw))
+            if not domain:
+                continue
+            if not _domain_valid(domain):
+                errors.append(f"'{domain}' non è un nome di dominio valido")
+                continue
+            if domain in existing_set:
+                errors.append(f"'{domain}' è già nella blacklist manuale")
+                continue
+            existing_set.add(domain)
+            added.append(domain)
+        if added:
+            MANUAL_LIST.parent.mkdir(parents=True, exist_ok=True)
+            with MANUAL_LIST.open("a") as f:
+                for d in added:
+                    f.write(d + "\n")
+            meta = _read_manual_meta()
+            now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+            who = _current_username()
+            for d in added:
+                meta[d] = {"comment": comment, "added_by": who, "added_at": now}
+            _write_manual_meta(meta)
+    return added, errors, None
 
 
 @app.route("/api/manual", methods=["POST"])
@@ -471,32 +699,85 @@ def api_manual_add():
     if not _domain_valid(domain):
         return jsonify({"error": f"'{domain}' non è un nome di dominio valido"}), 400
 
-    existing = _read_manual()
-    if domain in existing:
-        return jsonify({"error": f"'{domain}' è già nella blacklist manuale"}), 409
-
-    with MANUAL_LIST.open("a") as f:
-        f.write(domain + "\n")
+    added, errors, fatal = _manual_add_many([domain], data.get("comment", ""))
+    if fatal:
+        return jsonify({"error": fatal}), 400
+    if not added:
+        return jsonify({"error": errors[0] if errors else "Nessun dominio aggiunto"}), 409
 
     rc, out = _apply_manual()
     if rc != 0:
         return jsonify({"error": f"Dominio aggiunto ma rigenerazione fallita: {out}"}), 500
 
-    _audit("manual_add", domain)
-    return jsonify({"ok": True, "domain": domain})
+    comment = _clean_comment(data.get("comment", "")) or ""
+    _audit("manual_add", f"{domain} | {comment or '-'}")
+    return jsonify({"ok": True, "domain": domain, "comment": comment})
+
+
+@app.route("/api/manual/bulk", methods=["POST"])
+@login_required
+def api_manual_bulk_add():
+    """Aggiunge più domini in una sola operazione (una sola rigenerazione), con commento comune."""
+    data = request.get_json(silent=True) or {}
+    raw_domains = data.get("domains", [])
+    if not isinstance(raw_domains, list) or not raw_domains:
+        return jsonify({"error": "Nessun dominio fornito"}), 400
+
+    added, errors, fatal = _manual_add_many(raw_domains, data.get("comment", ""))
+    if fatal:
+        return jsonify({"error": fatal}), 400
+
+    if added:
+        rc, out = _apply_manual()
+        if rc != 0:
+            return jsonify({"error": f"Domini aggiunti ma rigenerazione fallita: {out}",
+                            "added": added, "errors": errors}), 500
+        comment = _clean_comment(data.get("comment", "")) or "-"
+        for d in added:
+            _audit("manual_add", f"{d} | {comment}")
+
+    return jsonify({"ok": True, "added": added, "errors": errors})
+
+
+@app.route("/api/manual/<path:domain>", methods=["PATCH"])
+@login_required
+def api_manual_update_comment(domain):
+    """Modifica il commento di una voce esistente (non tocca la lista né Unbound)."""
+    domain = _normalise(domain)
+    data = request.get_json(silent=True) or {}
+    comment = _clean_comment(data.get("comment", ""))
+    if comment is None:
+        return jsonify({"error": f"Commento non valido (max {MAX_COMMENT_LEN} caratteri)"}), 400
+
+    with _manual_lock:
+        if domain not in _read_manual():
+            return jsonify({"error": f"'{domain}' non è nella blacklist manuale"}), 404
+        meta = _read_manual_meta()
+        entry = meta.get(domain, {})
+        entry["comment"] = comment
+        entry.setdefault("added_by", "")
+        entry.setdefault("added_at", "")
+        meta[domain] = entry
+        _write_manual_meta(meta)
+
+    _audit("manual_comment", f"{domain} | {comment or '-'}")
+    return jsonify({"ok": True, "domain": domain, "comment": comment})
 
 
 @app.route("/api/manual/<path:domain>", methods=["DELETE"])
 @login_required
 def api_manual_delete(domain):
     domain = _normalise(domain)
-    existing = _read_manual()
-    if domain not in existing:
-        return jsonify({"error": f"'{domain}' non è nella blacklist manuale"}), 404
-
-    new_lines = [d for d in existing if d != domain]
-    with MANUAL_LIST.open("w") as f:
-        f.write("\n".join(new_lines) + ("\n" if new_lines else ""))
+    with _manual_lock:
+        existing = _read_manual()
+        if domain not in existing:
+            return jsonify({"error": f"'{domain}' non è nella blacklist manuale"}), 404
+        new_lines = [d for d in existing if d != domain]
+        with MANUAL_LIST.open("w") as f:
+            f.write("\n".join(new_lines) + ("\n" if new_lines else ""))
+        meta = _read_manual_meta()
+        if meta.pop(domain, None) is not None:
+            _write_manual_meta(meta)
 
     rc, out = _apply_manual()
     if rc != 0:
@@ -576,7 +857,24 @@ def api_stats():
     if not cache_valid and not _stats_building:
         _stats_building = True
         threading.Thread(target=_compute_stats_bg, daemon=True).start()
-    return jsonify({**_stats_cache, "_loading": not cache_valid})
+    return jsonify({**_stats_cache, "_loading": not cache_valid,
+                    "_mtimes": _blacklist_mtimes(), "_synced": _blacklist_synced(),
+                    "_prev": _stats_prev})
+
+
+@app.route("/api/health")
+@login_required
+def api_health():
+    """Stato dei resolver configurati in HEALTH_RESOLVERS: una query DNS reale a ciascuno."""
+    targets = _health_targets()
+    result: dict = {}
+    if targets:
+        with ThreadPoolExecutor(max_workers=max(1, len(targets))) as ex:
+            futs = {ex.submit(_dns_probe, h): n for n, h in targets.items()}
+            result = {futs[f]: f.result() for f in as_completed(futs)}
+    result["_checked_at"] = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    result["_order"] = list(targets.keys())
+    return jsonify(result)
 
 
 def _run_update_bg():
