@@ -15,7 +15,7 @@ gestione manuale dei domini bloccati.
 | **Sincronizzazione Piracy Shield** | `censorship/ps_sync.py` | Preleva FQDN e IP da Piracy Shield, aggiorna Unbound e i file per BGP blackhole |
 | **BGP blackhole** | `censorship/ps_bgp_push.sh` | Carica gli IP Piracy Shield in OpenBGPD |
 | **VPN Piracy Shield** | `vpn/` | Configura la VPN IPsec verso Azure (FreeBSD + StrongSwan) |
-| **Interfaccia web** | `app.py` + `templates/` | Ricerca domini, gestione lista manuale, monitoraggio liste attive |
+| **Interfaccia web** | `app.py` + `templates/` | Ricerca domini, lista manuale con commenti e inserimento massivo, statistiche con date e variazioni, stato dei resolver |
 
 Tutti i componenti comunicano tramite filesystem: gli script scrivono i file `.conf` che Unbound
 carica, e l'interfaccia web legge quegli stessi file.
@@ -60,7 +60,10 @@ mkdir -p /usr/local/etc/unbound/blacklists.d
 /etc/unbound/blacklists/               ← BL_DIR (directory di lavoro)
     raw_aams.txt                       ← file scaricati (temporanei)
     raw_admt.txt
-    raw_agcom.bin
+    raw_agcom.txt
+    agcom_state.json                   ← cache dei provvedimenti AGCOM già elaborati
+    manual_meta.json                   ← commenti e metadati delle voci manuali
+    stats_history.json                 ← storico conteggi per le variazioni nelle statistiche
     raw_consob.txt
     raw_ivass.txt
     manual.txt                         ← lista manuale (gestita dall'interfaccia web)
@@ -109,7 +112,7 @@ Gli script supportano nativamente le seguenti liste obbligatorie per legge:
 | `CNCPO` | Polizia Postale | Pedopornografia online | Distribuita agli ISP (non pubblica) |
 | `AAMS` | ADM | Giochi online non autorizzati | URL diretto dal portale ADM |
 | `ADMT` | ADM | Vendita tabacchi online | URL diretto dal portale ADM |
-| `AGCOM` | AGCOM | Violazione del diritto d'autore | Scaricata dal sito AGCOM |
+| `AGCOM` | AGCOM | Violazione del diritto d'autore | Elenco cumulativo 2024 + provvedimenti (PDF) dall'archivio AGCOM |
 | `CONSOB` | CONSOB | Servizi finanziari abusivi | Estratta dal sito CONSOB |
 | `IVASS` | IVASS | Intermediari assicurativi abusivi | Estratta dai PDF IVASS |
 | `PS` | AGCOM (Piracy Shield) | Pirateria audiovisiva in tempo reale | API Piracy Shield (VPN richiesta) |
@@ -140,6 +143,15 @@ sh censorship/update.sh
 Lo script registra l'avanzamento su stdout. Un errore su una singola lista non blocca le altre;
 il codice di uscita è non-zero se almeno una lista ha fallito.
 
+**AGCOM.** Dal giugno 2024 AGCOM non pubblica più l'elenco cumulativo in formato testo: ogni
+provvedimento (determina DDA o delibera CSP) è un PDF e i domini compaiono solo nella parte
+dispositiva. `download_agcom.py` parte dall'ultimo elenco cumulativo (`censorship/agcom_baseline_2024-06.txt`),
+enumera dall'archivio del sito tutti i provvedimenti successivi, ne estrae i domini dai PDF
+(richiede `pypdf`; `tldextract` è consigliato per scartare gli artefatti) e memorizza in
+`agcom_state.json` i provvedimenti già elaborati: il primo passaggio richiede una decina di minuti,
+i successivi pochi secondi. Opzioni: `--rescan` per riscandire tutto l'archivio, `--max N` e
+`--verbose` per i test.
+
 ### 3. Avviare l'interfaccia web
 
 ```sh
@@ -168,6 +180,10 @@ Tutta la configurazione avviene tramite variabili d'ambiente. Non sono necessari
 |-----------|---------|-------------|
 | `BL_DIR` | `/etc/unbound/blacklists` | Directory delle blacklist. L'interfaccia scopre automaticamente tutti i file `.conf`, `.txt`, `.csv` presenti. |
 | `MANUAL_LIST` | `$BL_DIR/manual.txt` | File di testo per i blocchi manuali |
+| `MANUAL_META` | `<MANUAL_LIST>_meta.json` | Commenti e metadati (autore, data) delle voci manuali |
+| `STATS_HISTORY` | `$BL_DIR/stats_history.json` | Storico conteggi per mostrare la variazione di ogni lista rispetto all'aggiornamento precedente |
+| `HEALTH_RESOLVERS` | `localhost=127.0.0.1` | Resolver mostrati nell'intestazione, `etichetta=host` separati da virgola (es. `ns1=127.0.0.1,ns2=ns2.example.net`) |
+| `HEALTH_PROBE_NAME` | `example.com` | Nome risolto dalla query DNS di controllo |
 | `WHITELIST` | `$BL_DIR/whitelist.txt` | Domini esclusi da tutti i blocchi |
 | `APPLY_CMD` | *(vuoto)* | Comando eseguito dopo ogni modifica alla lista manuale o alla whitelist |
 | `UPDATE_CMD` | *(vuoto)* | Comando eseguito al click su "Aggiorna liste" nell'interfaccia |
