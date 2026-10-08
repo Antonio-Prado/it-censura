@@ -41,6 +41,16 @@ def _total_pages(soup: BeautifulSoup) -> int:
         m = re.search(r"(\d+)$", span.get_text())
         if m:
             return int(m.group(1))
+    # Fallback (markup Liferay cambiato nel 2026): numero massimo nei link di paginazione "_cur=N"
+    pages = []
+    for a in soup.find_all("a", href=True):
+        m = re.search(r"_cur=(\d+)", a["href"])
+        if m:
+            pages.append(int(m.group(1)))
+    if pages:
+        return max(pages)
+    print("ATTENZIONE: impossibile determinare il numero di pagine CONSOB, scarico solo la prima",
+          file=sys.stderr)
     return 1
 
 

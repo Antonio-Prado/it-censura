@@ -74,7 +74,7 @@ fi
 
 # ── AGCOM — diritto d'autore ──────────────────────────────────────────────────
 log "--- AGCOM ---"
-RAW="${BL_DIR}/raw_agcom.bin"
+RAW="${BL_DIR}/raw_agcom.txt"   # elenco base 2024 + provvedimenti successivi (cache agcom_state.json in BL_DIR)
 python3 "${SCRIPT_DIR}/download_agcom.py" -o "${RAW}" \
     && parse plain "${RAW}" AGCOM \
     || { warn "AGCOM: aggiornamento fallito"; errors=$((errors + 1)); }
