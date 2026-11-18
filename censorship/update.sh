@@ -41,6 +41,22 @@ parse() {
         -f "${fmt}" -i "${infile}" -o "${CONF_DIR}/${name}.conf" ${wl_opt}
 }
 
+# Precedenza CNCPO: toglie da una lista grezza i domini gia' presenti in CNCPO.conf.
+# Un dominio in due liste genera una local-zone duplicata (Unbound avvisa e, se le liste
+# reindirizzano a pagine diverse, risponde con entrambi gli indirizzi). Il blocco CNCPO
+# ha la precedenza; per questo CNCPO viene elaborato per primo.  $1 file grezzo, $2 nome lista
+cncpo_first() {
+    cncpo_conf="${CONF_DIR}/CNCPO.conf"
+    [ -s "${cncpo_conf}" ] || return 0
+    awk -v NAME="$2" '
+         FILENAME == ARGV[1] { if ($1 == "local-zone:") { d = $2; gsub(/"/, "", d); sub(/\.$/, "", d); c[tolower(d)] = 1 }; next }
+         { k = tolower($0); sub(/^[[:space:]]+/, "", k); sub(/[[:space:]]+$/, "", k) }
+         (k in c) { n++; next }
+         { print }
+         END { if (n) printf "%s: esclusi %d domini gia presenti in CNCPO\n", NAME, n > "/dev/stderr" }' \
+        "${cncpo_conf}" "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+
 # ── CNCPO — pedopornografia (non scaricabile pubblicamente) ───────────────────
 if [ -n "${CNCPO_FILE}" ] && [ -f "${CNCPO_FILE}" ]; then
     log "--- CNCPO ---"
@@ -76,6 +92,7 @@ fi
 log "--- AGCOM ---"
 RAW="${BL_DIR}/raw_agcom.txt"   # elenco base 2024 + provvedimenti successivi (cache agcom_state.json in BL_DIR)
 python3 "${SCRIPT_DIR}/download_agcom.py" -o "${RAW}" \
+    && cncpo_first "${RAW}" AGCOM \
     && parse plain "${RAW}" AGCOM \
     || { warn "AGCOM: aggiornamento fallito"; errors=$((errors + 1)); }
 

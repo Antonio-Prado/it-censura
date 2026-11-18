@@ -15,3 +15,7 @@ censorship.tbz2
 
 # macOS
 .DS_Store
+
+# Chiave abuse.ch (liste community): mai nel repository
+.abusech_authkey
+*.authkey
