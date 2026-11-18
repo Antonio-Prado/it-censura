@@ -12,6 +12,8 @@ gestione manuale dei domini bloccati.
 | Componente | Percorso | Funzione |
 |------------|----------|----------|
 | **Script blacklist ufficiali** | `censorship/update.sh` | Scarica e converte le blacklist delle autorità italiane in formato Unbound |
+| **Liste community** *(opzionale)* | `censorship/community.sh` | Scarica liste di malware, C2 e phishing (abuse.ch URLhaus e ThreatFox, scamblocklist, malicious-domains) con filtri contro i falsi positivi |
+| **Aggiornamento settimanale** | `weekly_update.sh` + `notify_mail.py` | Esegue l'aggiornamento e manda una mail solo se trova errori o avvisi |
 | **Sincronizzazione Piracy Shield** | `censorship/ps_sync.py` | Preleva FQDN e IP da Piracy Shield, aggiorna Unbound e i file per BGP blackhole |
 | **BGP blackhole** | `censorship/ps_bgp_push.sh` | Carica gli IP Piracy Shield in OpenBGPD |
 | **VPN Piracy Shield** | `vpn/` | Configura la VPN IPsec verso Azure (FreeBSD + StrongSwan) |
@@ -24,9 +26,10 @@ carica, e l'interfaccia web legge quegli stessi file.
 
 ## Requisiti
 
-- Python 3.10 o superiore
+- Python 3.10 o superiore (versioni in `requirements.txt` provate con Python 3.12)
 - [Unbound](https://nlnetlabs.nl/projects/unbound/) come resolver DNS
-- `curl` (per il download delle liste ADM in `update.sh`)
+- `curl` (per il download delle liste ADM in `update.sh` e delle liste community)
+- `dig` (controllo del resolver e consegna delle notifiche in `weekly_update.sh`)
 - FreeBSD o Linux
 - **Solo per Piracy Shield:** StrongSwan (VPN), OpenBGPD (BGP blackhole)
 
@@ -39,15 +42,14 @@ carica, e l'interfaccia web legge quegli stessi file.
 git clone https://github.com/Antonio-Prado/it-censura.git
 cd it-censura
 
-# 2. Dipendenze interfaccia web
-pip install flask flask-login
-# oppure su FreeBSD:
-# pkg install py311-flask py311-flask-login
+# 2. Dipendenze (interfaccia web, script di aggiornamento, Piracy Shield) in un virtualenv
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
+# Gli script usano "python3": avviarli con il venv nel PATH (es. PATH=/opt/it-censura/venv/bin:$PATH)
+# I parser AGCOM/CONSOB/IVASS sono provati con le versioni indicate in requirements.txt:
+# un cambio di versione maggiore di pypdf o tldextract puo' cambiare i domini estratti.
 
-# 3. Dipendenze script di aggiornamento e Piracy Shield
-pip install requests beautifulsoup4 tldextract urlextract pypdf
-
-# 4. Crea le directory di lavoro
+# 3. Crea le directory di lavoro
 mkdir -p /etc/unbound/blacklists
 mkdir -p /usr/local/etc/unbound/blacklists.d
 ```
@@ -117,6 +119,11 @@ Gli script supportano nativamente le seguenti liste obbligatorie per legge:
 | `IVASS` | IVASS | Intermediari assicurativi abusivi | Estratta dai PDF IVASS |
 | `PS` | AGCOM (Piracy Shield) | Pirateria audiovisiva in tempo reale | API Piracy Shield (VPN richiesta) |
 | `MANUAL` | — | Provvedimenti giudiziari e blocchi manuali | Gestita dall'interfaccia web |
+
+**Precedenza CNCPO.** Un dominio presente sia in CNCPO sia in AGCOM genererebbe una `local-zone`
+duplicata (Unbound avvisa e, se le liste reindirizzano a pagine di blocco diverse, risponde con
+entrambi gli indirizzi). `update.sh` elabora CNCPO per primo e toglie dalla lista AGCOM i domini
+già presenti in `CNCPO.conf`.
 
 ---
 
@@ -290,13 +297,88 @@ In alternativa usare `weekly_update.sh` come wrapper:
 UPDATE_CMD="sh /opt/it-censura/censorship/update.sh" sh weekly_update.sh
 ```
 
+### Notifiche via mail
+
+Con `ALERT_TO` impostato, `weekly_update.sh` cerca a fine giro, solo nelle righe di log di quel giro,
+errori e avvisi (download falliti, liste tenute alla versione precedente, errori Python, avvisi di
+`unbound-checkconf`, resolver locale che non risponde) e manda una mail con l'elenco tramite
+`notify_mail.py`. Se non trova nulla non manda niente. Usa le stesse variabili `SMTP_*`
+dell'interfaccia web; se il relay non è configurato o rifiuta il messaggio, consegna direttamente
+al server di posta del destinatario (il mittente deve essere autorizzato dall'SPF del suo dominio).
+
+```sh
+0 3 * * 0  root \
+  PATH=/opt/it-censura/venv/bin:$PATH \
+  ALERT_TO=noc@example.it SMTP_HOST=smtp.example.it SMTP_FROM=blacklist@example.it \
+  UPDATE_CMD="sh /opt/it-censura/censorship/update.sh && sh /opt/it-censura/censorship/community.sh; sh /opt/it-censura/censorship/BL_concat.sh && service unbound reload" \
+  sh /opt/it-censura/weekly_update.sh
+```
+
+| Variabile | Default | Descrizione |
+|-----------|---------|-------------|
+| `UPDATE_CMD` | *(obbligatoria)* | Comando di aggiornamento |
+| `ALERT_TO` | *(vuoto)* | Destinatari degli avvisi, separati da virgola; vuoto = nessuna mail |
+| `CHECK_NAME` | `www.google.com` | Nome risolto per verificare il resolver locale; vuoto = nessun controllo |
+| `LOGFILE` | `/var/log/dns_gui_update.log` | File di log |
+
 ---
 
 ## Liste community (opzionale)
 
 Per chi affianca alle liste ufficiali delle liste community in formato Unbound (es. malware, phishing),
 è possibile posizionarle in `BL_DIR` come file `BL_*.conf` ed eseguire `BL_concat.sh` per unire
-e deduplicare tutto in un unico file `merged.conf`:
+e deduplicare tutto in un unico file `merged.conf`.
+
+`BL_concat.sh` scarta dalle liste community i domini già presenti nelle liste ufficiali o nella
+whitelist e i **sottodomini di un dominio già bloccato da una lista ufficiale** (altrimenti la voce
+community, più specifica, scavalcherebbe il blocco del padre). La whitelist non conta come padre:
+mettere in whitelist un dominio non sblocca i suoi sottodomini. Il file unificato viene scritto in modo
+atomico con permessi `640` e gruppo `unbound` (`UNBOUND_GROUP`), perché Unbound rilegge la
+configurazione al reload come utente non privilegiato.
+
+### Scaricare le liste community: `community.sh`
+
+`censorship/community.sh` scarica e converte in `BL_DIR/BL_<nome>.conf` queste fonti:
+
+| Nome | Fonte | Contenuto | Licenza |
+|------|-------|-----------|---------|
+| `urlhaus` | [abuse.ch URLhaus](https://urlhaus.abuse.ch/) (RPZ) | Domini che distribuiscono malware | Fair use abuse.ch |
+| `threatfox` | [abuse.ch ThreatFox](https://threatfox.abuse.ch/) | Domini di server C2, consegna payload, botnet | Fair use abuse.ch |
+| `scamblocklist` | [durablenapkin/scamblocklist](https://github.com/durablenapkin/scamblocklist) | Truffe online | MIT |
+| `phishdomains` | [romainmarcoux/malicious-domains](https://github.com/romainmarcoux/malicious-domains) | Aggregato di fonti di phishing | MIT (verificare i termini delle fonti aggregate) |
+
+Le API di export di abuse.ch richiedono una chiave gratuita: account su
+[auth.abuse.ch](https://auth.abuse.ch/), poi "Generate Key". Salvarla in un file leggibile solo da root
+(`ABUSECH_KEY_FILE`, default `BL_DIR/.abusech_authkey`, permessi `600`) e **mai nel repository**.
+Le API accettano la chiave solo nell'URL: lo script la passa a `curl` via stdin, così non compare
+nell'elenco dei processi né nei log. Senza chiave URLhaus usa il mirror
+[malware-filter/urlhaus-filter](https://gitlab.com/malware-filter/urlhaus-filter) e ThreatFox viene
+saltata. Per un uso commerciale verificare i termini di abuse.ch (*"commercial or for-profit needs may
+require a paid subscription"*).
+
+Ogni fonte passa da `community_filter.py`, che scarta IP, nomi malformati, domini `.gov.it`, i
+**suffissi pubblici** ([Public Suffix List](https://publicsuffix.org/): alcune liste contengono per
+errore voci come `net.ru`, che bloccherebbero migliaia di siti) e i domini fra i primi `TRANCO_TOP`
+della classifica [Tranco](https://tranco-list.eu/) (default 100 000: siti popolari, probabili falsi
+positivi). Le esclusioni sono registrate in `BL_DIR/<nome>.excluded.log`.
+
+Se un download fallisce o la lista risulta anomala (sotto una soglia minima di domini), il
+`BL_<nome>.conf` precedente resta intatto e lo script segnala l'errore: un problema della fonte non
+svuota mai una lista.
+
+```sh
+BL_DIR=/etc/unbound/blacklists sh censorship/community.sh \
+  && sh censorship/BL_concat.sh && service unbound reload
+```
+
+| Variabile | Default | Descrizione |
+|-----------|---------|-------------|
+| `BL_DIR` | `/etc/unbound/blacklists` | Directory dei file community |
+| `ABUSECH_KEY_FILE` | `$BL_DIR/.abusech_authkey` | File con la chiave abuse.ch |
+| `COMMUNITY_LISTS` | `urlhaus threatfox scamblocklist phishdomains` | Fonti da aggiornare |
+| `TRANCO_TOP` | `100000` | Siti popolari esclusi; `0` = nessuna esclusione |
+
+### Unire le liste: `BL_concat.sh`
 
 ```sh
 BL_DIR=/etc/unbound/blacklists \
