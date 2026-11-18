@@ -211,6 +211,7 @@
     Le blacklist sono divise in due categorie: <span class="tag orange">ufficiali</span> (disposizioni
     di legge italiane) e <span class="tag blue">community</span> (liste pubbliche aggiornate
     automaticamente). Solo la lista <span class="tag red">manual</span> è modificabile dalla GUI.
+    È disponibile anche una <strong>whitelist</strong> per escludere specifici domini dal blocco.
   </p>
 
   <!-- Ricerca -->
@@ -240,6 +241,17 @@
         <p>Il banner diventa verde. Appare il pulsante per aggiungerlo alla blacklist manuale.</p>
       </div>
     </div>
+    <div class="card-row">
+      <div class="icon blue">✎</div>
+      <div class="card-row-body">
+        <strong>Commenti, autore e data</strong>
+        <p>Se il dominio è nella blacklist manuale o nella whitelist, il banner mostra il commento
+        associato e <em>"aggiunto da utente · data"</em> (solo se registrati: le voci inserite prima
+        dell'introduzione dei metadati non hanno autore né data). Se il dominio non è in whitelist,
+        sopra il pulsante <em>"Aggiungi alla whitelist"</em> compare un campo per un commento facoltativo
+        (es. il motivo dell'esclusione), che viene salvato insieme alla voce.</p>
+      </div>
+    </div>
   </div>
 
   <div class="note">
@@ -259,6 +271,7 @@
     <tr><td><span class="tag orange">CERT-AGID</span></td><td>CERT Agenzia Italia Digitale — malware, phishing</td></tr>
     <tr><td><span class="tag blue">abuse / malware / phishing…</span></td><td>Liste community (StevenBlack, URLhaus, ecc.)</td></tr>
     <tr><td><span class="tag red">manual</span></td><td>Blacklist manuale — gestita da questa GUI</td></tr>
+    <tr><td><span class="tag green">whitelist</span></td><td>Dominio presente nella whitelist (non viene bloccato)</td></tr>
   </table>
 
   <!-- Blacklist manuale -->
@@ -292,8 +305,16 @@
         <code>Decreto GIP n. 1234/2026</code>. Il commento compare sotto il dominio nella lista,
         nel risultato della ricerca e nel log di audit. Il campo non si svuota dopo l'aggiunta, così
         puoi inserire altri domini con lo stesso riferimento. Con la matita <strong>✎</strong> accanto a
-        una voce puoi aggiungere o modificare il commento in qualsiasi momento, senza rigenerare nulla.
-        Passando il mouse sulla voce vedi anche chi l'ha aggiunta e quando.</p>
+        una voce puoi aggiungere o modificare il commento in qualsiasi momento, senza rigenerare nulla.</p>
+      </div>
+    </div>
+    <div class="card-row">
+      <div class="icon blue">🕑</div>
+      <div class="card-row-body">
+        <strong>Data e autore</strong>
+        <p>Sotto ogni voce è indicato quando e da chi è stata aggiunta (<em>"aggiunto data · utente"</em>).
+        Per le voci inserite prima dell'introduzione dei metadati compare <em>"data non registrata"</em>:
+        la data non viene mai ricostruita o stimata.</p>
       </div>
     </div>
     <div class="card-row">
@@ -326,6 +347,62 @@
   <p>Sono accettati solo nomi di dominio validi, es. <code>example.com</code>, <code>sub.example.co.uk</code>.
   Non sono accettati: URL completi (<code>https://…</code>), indirizzi IP, domini senza TLD (<code>localhost</code>),
   stringhe con caratteri non validi.</p>
+
+  <!-- Whitelist -->
+  <h2>Whitelist</h2>
+  <p>
+    La whitelist (file <code>WHITELIST</code>, di default <code>whitelist.txt</code>) raccoglie i domini che
+    <strong>non devono essere bloccati</strong> anche se presenti in una o più blacklist. È utile per escludere
+    falsi positivi o domini interni che compaiono nelle liste community. Come per la blacklist manuale,
+    commenti e metadati (autore, data) sono salvati a parte in <code>WHITELIST_META</code>
+    (di default <code>whitelist_meta.json</code> accanto alla whitelist): se il file non esiste la whitelist
+    funziona comunque, semplicemente senza commenti né date.
+  </p>
+
+  <div class="card">
+    <div class="card-row">
+      <div class="icon green">+</div>
+      <div class="card-row-body">
+        <strong>Aggiungere un dominio</strong>
+        <p>Scrivi il dominio nel campo del pannello Whitelist e premi <strong>+</strong> o <strong>Invio</strong>.
+        In alternativa, dopo una ricerca, usa il pulsante <em>"Aggiungi alla whitelist"</em>.</p>
+      </div>
+    </div>
+    <div class="card-row">
+      <div class="icon blue">✎</div>
+      <div class="card-row-body">
+        <strong>Commento</strong>
+        <p>Sotto il campo del dominio puoi scrivere un commento facoltativo (max 200 caratteri, per esempio
+        il motivo dell'esclusione). Per aggiungerlo o modificarlo dopo, clicca la <strong>✎</strong> accanto
+        al dominio: la modifica del commento non rigenera nulla. Il commento compare sotto il dominio,
+        nel risultato della ricerca e nel log di audit.</p>
+      </div>
+    </div>
+    <div class="card-row">
+      <div class="icon blue">🕑</div>
+      <div class="card-row-body">
+        <strong>Data e autore</strong>
+        <p>Sotto ogni voce sono indicati data, ora e utente che l'ha aggiunta (<em>"aggiunto data · utente"</em>);
+        per le voci più vecchie, aggiunte prima dell'introduzione dei metadati, compare
+        <em>"data non registrata"</em>.</p>
+      </div>
+    </div>
+    <div class="card-row">
+      <div class="icon red">✕</div>
+      <div class="card-row-body">
+        <strong>Rimuovere un dominio</strong>
+        <p>Clicca la <strong>✕</strong> accanto al dominio nel pannello Whitelist, oppure
+        dopo una ricerca usa il pulsante <em>"Rimuovi dalla whitelist"</em>. Insieme alla voce vengono
+        eliminati anche il suo commento e i suoi metadati.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <strong>Nota:</strong> Nella ricerca, i domini presenti in whitelist appaiono con il tag
+    <span class="tag green">whitelist</span>. Dopo ogni aggiunta o rimozione nella whitelist le configurazioni
+    vengono rigenerate come per la blacklist manuale; ricaricare Unbound per applicare le modifiche.
+  </div>
 
   <!-- Ricarica Unbound -->
   <h2>Ricarica del servizio Unbound</h2>

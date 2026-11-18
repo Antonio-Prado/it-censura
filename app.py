@@ -150,6 +150,9 @@ MANUAL_LIST  = Path(os.environ.get("MANUAL_LIST", str(BL_DIR / "manual.txt")))
 # che resta una semplice lista di domini leggibile da qualsiasi script.
 MANUAL_META  = Path(os.environ.get("MANUAL_META", str(MANUAL_LIST.with_name(MANUAL_LIST.stem + "_meta.json"))))
 WHITELIST    = Path(os.environ.get("WHITELIST",   str(BL_DIR / "whitelist.txt")))
+# Metadati delle voci in whitelist (commento, autore, data): JSON accanto alla whitelist,
+# che resta una semplice lista di domini (stesso schema di MANUAL_META).
+WHITELIST_META = Path(os.environ.get("WHITELIST_META", str(WHITELIST.with_name(WHITELIST.stem + "_meta.json"))))
 # Storico dei conteggi per lista (per mostrare la variazione rispetto all'aggiornamento precedente)
 STATS_HISTORY = Path(os.environ.get("STATS_HISTORY", str(BL_DIR / "stats_history.json")))
 # Resolver da monitorare nell'intestazione: "etichetta=host,etichetta=host"
@@ -230,6 +233,7 @@ STATS_CACHE_TTL = 300  # secondi
 _stats_history_lock = threading.Lock()
 _stats_prev: dict = {}          # {lista: {"count": conteggio precedente, "mtime": data precedente}}
 _manual_lock = threading.Lock()
+_wl_lock = threading.Lock()
 
 # ── Update job ────────────────────────────────────────────────────────────────
 _update_job: dict = {"status": "idle", "started": None, "ended": None, "output": ""}
@@ -331,6 +335,45 @@ def _read_whitelist() -> list[str]:
         return []
     with WHITELIST.open(errors="replace") as f:
         return [_normalise(ln) for ln in f if ln.strip() and not ln.startswith("#")]
+
+
+def _read_whitelist_meta() -> dict[str, dict]:
+    """Metadati della whitelist {dominio: {comment, added_by, added_at}}. Chiamare dentro _wl_lock."""
+    if not WHITELIST_META.exists():
+        return {}
+    try:
+        with WHITELIST_META.open(errors="replace") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError) as exc:
+        app.logger.error("Lettura %s fallita: %s", WHITELIST_META, exc)
+        return {}
+
+
+def _write_whitelist_meta(meta: dict[str, dict]) -> None:
+    """Scrittura atomica (tmp + rename). Chiamare dentro _wl_lock."""
+    WHITELIST_META.parent.mkdir(parents=True, exist_ok=True)
+    tmp = WHITELIST_META.with_suffix(".json.tmp")
+    with tmp.open("w") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=1, sort_keys=True)
+    os.replace(tmp, WHITELIST_META)
+
+
+def _set_whitelist_meta(domains, comment: str) -> None:
+    """Registra commento/autore/data per i domini appena aggiunti. Chiamare dentro _wl_lock."""
+    meta = _read_whitelist_meta()
+    now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    who = _current_username()
+    for d in domains:
+        meta[d] = {"comment": comment, "added_by": who, "added_at": now}
+    _write_whitelist_meta(meta)
+
+
+def _drop_whitelist_meta(domains) -> None:
+    """Elimina i metadati dei domini rimossi dalla whitelist. Chiamare dentro _wl_lock."""
+    meta = _read_whitelist_meta()
+    if any(meta.pop(d, None) is not None for d in list(domains)):
+        _write_whitelist_meta(meta)
 
 
 # ── grep-based search e conteggio ─────────────────────────────────────────────
@@ -631,17 +674,26 @@ def api_search():
                 found_in.append(result)
 
     in_whitelist = domain in _read_whitelist()
-    manual_comment = ""
+    manual_meta: dict = {}
     if "manual" in found_in:
         with _manual_lock:
-            manual_comment = _read_manual_meta().get(domain, {}).get("comment", "")
+            manual_meta = _read_manual_meta().get(domain, {})
+    whitelist_meta: dict = {}
+    if in_whitelist:
+        with _wl_lock:
+            whitelist_meta = _read_whitelist_meta().get(domain, {})
     return jsonify({
         "domain": domain,
         "found": bool(found_in),
         "lists": sorted(found_in),
         "in_manual": "manual" in found_in,
-        "manual_comment": manual_comment,
+        "manual_comment": manual_meta.get("comment", ""),
+        "manual_added_by": manual_meta.get("added_by", ""),
+        "manual_added_at": manual_meta.get("added_at", ""),
         "in_whitelist": in_whitelist,
+        "whitelist_comment": whitelist_meta.get("comment", ""),
+        "whitelist_added_by": whitelist_meta.get("added_by", ""),
+        "whitelist_added_at": whitelist_meta.get("added_at", ""),
     })
 
 
@@ -790,7 +842,17 @@ def api_manual_delete(domain):
 @app.route("/api/whitelist", methods=["GET"])
 @login_required
 def api_whitelist_list():
-    return jsonify({"domains": sorted(_read_whitelist())})
+    with _wl_lock:
+        domains = sorted(_read_whitelist())
+        meta = _read_whitelist_meta()
+    # "meta" contiene una voce per OGNI dominio (campi vuoti se mai registrati),
+    # così l'interfaccia può mostrare "data non registrata" senza inventare nulla.
+    full = {}
+    for d in domains:
+        m = meta.get(d, {})
+        full[d] = {"comment": m.get("comment", ""),
+                   "added_by": m.get("added_by", ""), "added_at": m.get("added_at", "")}
+    return jsonify({"domains": domains, "meta": full})
 
 
 @app.route("/api/whitelist", methods=["POST"])
@@ -803,32 +865,65 @@ def api_whitelist_add():
     if not _domain_valid(domain):
         return jsonify({"error": f"'{domain}' non è un nome di dominio valido"}), 400
 
-    existing = _read_whitelist()
-    if domain in existing:
-        return jsonify({"error": f"'{domain}' è già nella whitelist"}), 409
+    comment = _clean_comment(data.get("comment", ""))
+    if comment is None:
+        return jsonify({"error": f"Commento non valido (max {MAX_COMMENT_LEN} caratteri, niente caratteri di controllo)"}), 400
 
-    with WHITELIST.open("a") as f:
-        f.write(domain + "\n")
+    with _wl_lock:
+        existing = _read_whitelist()
+        if domain in existing:
+            return jsonify({"error": f"'{domain}' è già nella whitelist"}), 409
+        WHITELIST.parent.mkdir(parents=True, exist_ok=True)
+        with WHITELIST.open("a") as f:
+            f.write(domain + "\n")
+        _set_whitelist_meta([domain], comment)
 
     rc, out = _apply_whitelist()
     if rc != 0:
         return jsonify({"error": f"Dominio aggiunto ma rigenerazione fallita: {out}"}), 500
 
-    _audit("whitelist_add", domain)
-    return jsonify({"ok": True, "domain": domain})
+    _audit("whitelist_add", f"{domain} | {comment or '-'}")
+    return jsonify({"ok": True, "domain": domain, "comment": comment})
+
+
+@app.route("/api/whitelist/<path:domain>", methods=["PATCH"])
+@login_required
+def api_whitelist_update_comment(domain):
+    """Modifica il commento di una voce della whitelist (non tocca la lista né Unbound)."""
+    domain = _normalise(domain)
+    data = request.get_json(silent=True) or {}
+    comment = _clean_comment(data.get("comment", ""))
+    if comment is None:
+        return jsonify({"error": f"Commento non valido (max {MAX_COMMENT_LEN} caratteri)"}), 400
+
+    with _wl_lock:
+        if domain not in _read_whitelist():
+            return jsonify({"error": f"'{domain}' non è nella whitelist"}), 404
+        meta = _read_whitelist_meta()
+        entry = meta.get(domain, {})
+        entry["comment"] = comment
+        # Voci preesistenti senza metadati: autore e data restano vuoti (mai inventati)
+        entry.setdefault("added_by", "")
+        entry.setdefault("added_at", "")
+        meta[domain] = entry
+        _write_whitelist_meta(meta)
+
+    _audit("whitelist_comment", f"{domain} | {comment or '-'}")
+    return jsonify({"ok": True, "domain": domain, "comment": comment})
 
 
 @app.route("/api/whitelist/<path:domain>", methods=["DELETE"])
 @login_required
 def api_whitelist_delete(domain):
     domain = _normalise(domain)
-    existing = _read_whitelist()
-    if domain not in existing:
-        return jsonify({"error": f"'{domain}' non è nella whitelist"}), 404
-
-    new_lines = [d for d in existing if d != domain]
-    with WHITELIST.open("w") as f:
-        f.write("\n".join(new_lines) + ("\n" if new_lines else ""))
+    with _wl_lock:
+        existing = _read_whitelist()
+        if domain not in existing:
+            return jsonify({"error": f"'{domain}' non è nella whitelist"}), 404
+        new_lines = [d for d in existing if d != domain]
+        with WHITELIST.open("w") as f:
+            f.write("\n".join(new_lines) + ("\n" if new_lines else ""))
+        _drop_whitelist_meta([domain])
 
     rc, out = _apply_whitelist()
     if rc != 0:

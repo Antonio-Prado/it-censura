@@ -164,6 +164,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .manual-item .mi-date {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: .68rem;
+    color: var(--muted);
+    opacity: .8;
+    white-space: nowrap;
+  }
   .manual-item .mi-actions { display: flex; align-items: center; gap: .1rem; flex-shrink: 0; }
   .manual-item .edit-btn {
     background: none;
@@ -376,8 +383,10 @@
         <div class="status-line" id="res-status"></div>
         <div class="tags" id="res-tags"></div>
         <div id="res-manual-comment" style="display:none;margin-top:.4rem;font-size:.8rem;color:var(--muted);"></div>
+        <div id="res-whitelist-comment" style="display:none;margin-top:.4rem;font-size:.8rem;color:var(--muted);"></div>
         <button class="btn-success" id="btn-add-from-search"    style="display:none" onclick="addFromSearch()">+ Aggiungi alla blacklist manuale</button>
         <button class="btn-danger"  id="btn-remove-from-search" style="display:none" onclick="removeFromSearch()">- Rimuovi dalla blacklist manuale</button>
+        <input type="text" id="res-wl-comment-input" placeholder="commento whitelist (facoltativo, es. falso positivo segnalato da…)" maxlength="200" autocomplete="off" spellcheck="false" style="display:none;width:100%;box-sizing:border-box;margin-top:.6rem;font-family:inherit;font-size:.82rem;padding:.4rem .6rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;outline:none;">
         <button class="btn-neutral" id="btn-whitelist-add"    style="display:none" onclick="addToWhitelist()">✓ Aggiungi alla whitelist</button>
         <button class="btn-danger"  id="btn-whitelist-remove" style="display:none" onclick="removeFromWhitelist()">✗ Rimuovi dalla whitelist</button>
       </div>
@@ -456,9 +465,12 @@
         <span id="whitelist-count" style="font-size:.75rem;color:var(--muted);">0 voci</span>
       </div>
       <p style="font-size:.78rem;color:var(--muted);margin-bottom:.8rem;">Domini esclusi da tutte le blacklist.</p>
-      <div class="manual-toolbar">
-        <input type="text" id="wl-add-input" placeholder="aggiungi dominio…" autocomplete="off" spellcheck="false">
-        <button class="btn-success" onclick="addWhitelist()">+</button>
+      <div class="manual-toolbar" style="flex-direction:column;gap:.4rem;">
+        <div style="display:flex;gap:.5rem;">
+          <input type="text" id="wl-add-input" placeholder="aggiungi dominio…" autocomplete="off" spellcheck="false">
+          <button class="btn-success" onclick="addWhitelist()">+</button>
+        </div>
+        <input type="text" id="wl-comment" placeholder="commento (facoltativo, es. falso positivo segnalato da…)" maxlength="200" autocomplete="off" spellcheck="false" style="font-family:inherit;font-size:.82rem;">
       </div>
       <div id="whitelist-list"><div class="loader-row"><span class="spinner"></span>Caricamento…</div></div>
     </div>
@@ -511,7 +523,22 @@ function _fmtDate(iso) {
   const d = new Date(iso);
   return isNaN(d) ? iso : d.toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" });
 }
+// Riga "aggiunto data · utente" sotto le voci di blacklist manuale e whitelist.
+// Le voci create prima dell'introduzione dei metadati non hanno data: mai inventarla.
+function _addedLine(m) {
+  if (!m || !m.added_at) return "data non registrata";
+  return "aggiunto " + esc(_fmtDate(m.added_at)) + (m.added_by ? " · " + esc(m.added_by) : "");
+}
+
+// Testo "aggiunto da utente · data" per il banner della ricerca
+function _addedBy(by, at) {
+  return [by, at ? _fmtDate(at) : ""].filter(Boolean).join(" · ");
+}
+
 document.getElementById("wl-add-input").addEventListener("keydown", e => {
+  if (e.key === "Enter") addWhitelist();
+});
+document.getElementById("wl-comment").addEventListener("keydown", e => {
   if (e.key === "Enter") addWhitelist();
 });
 
@@ -541,6 +568,9 @@ async function searchDomain() {
     document.getElementById("btn-remove-from-search").style.display = "none";
     document.getElementById("btn-whitelist-add").style.display = "none";
     document.getElementById("btn-whitelist-remove").style.display = "none";
+    document.getElementById("res-wl-comment-input").style.display = "none";
+    document.getElementById("res-manual-comment").style.display = "none";
+    document.getElementById("res-whitelist-comment").style.display = "none";
     return;
   }
 
@@ -554,11 +584,21 @@ async function searchDomain() {
   const tagsEl = document.getElementById("res-tags");
   tagsEl.innerHTML = "";
   const commentEl = document.getElementById("res-manual-comment");
-  if (data.in_manual && data.manual_comment) {
-    commentEl.innerHTML = `Commento blacklist manuale: <em>${esc(data.manual_comment)}</em>`;
+  if (data.in_manual && (data.manual_comment || data.manual_added_by || data.manual_added_at)) {
+    const who = _addedBy(data.manual_added_by, data.manual_added_at);
+    commentEl.innerHTML = `Blacklist manuale${data.manual_comment ? `: <em>${esc(data.manual_comment)}</em>` : ""}${who ? ` <span style="opacity:.8">(aggiunto da ${esc(who)})</span>` : ""}`;
     commentEl.style.display = "block";
   } else {
     commentEl.style.display = "none";
+  }
+
+  const wlCommentEl = document.getElementById("res-whitelist-comment");
+  if (data.in_whitelist && (data.whitelist_comment || data.whitelist_added_by || data.whitelist_added_at)) {
+    const who = _addedBy(data.whitelist_added_by, data.whitelist_added_at);
+    wlCommentEl.innerHTML = `Whitelist${data.whitelist_comment ? `: <em>${esc(data.whitelist_comment)}</em>` : ""}${who ? ` <span style="opacity:.8">(aggiunto da ${esc(who)})</span>` : ""}`;
+    wlCommentEl.style.display = "block";
+  } else {
+    wlCommentEl.style.display = "none";
   }
 
   if (data.in_whitelist) {
@@ -587,6 +627,11 @@ async function searchDomain() {
   }
 
   document.getElementById("btn-whitelist-add").style.display    = data.in_whitelist ? "none"  : "block";
+  // Campo commento per l'aggiunta in whitelist: visibile solo se il dominio non è già in whitelist;
+  // si svuota quando si cerca un dominio diverso
+  const wlInput = document.getElementById("res-wl-comment-input");
+  wlInput.style.display = data.in_whitelist ? "none" : "block";
+  if (wlInput.dataset.domain !== data.domain) { wlInput.value = ""; wlInput.dataset.domain = data.domain; }
   document.getElementById("btn-whitelist-remove").style.display = data.in_whitelist ? "block" : "none";
 
   res.style.display = "block";
@@ -647,6 +692,7 @@ function renderManual() {
       <div class="mi-main" title="${title}">
         <span>${e.domain}</span>
         ${e.comment ? `<span class="mi-comment">${esc(e.comment)}</span>` : ""}
+        <span class="mi-date">${_addedLine(e)}</span>
       </div>
       <div class="mi-actions">
         <button class="edit-btn" title="${e.comment ? "Modifica commento" : "Aggiungi commento"}" onclick="editComment('${e.domain}')">&#x270E;</button>
@@ -735,24 +781,52 @@ async function deleteManual(domain) {
 }
 
 // ── Whitelist ─────────────────────────────────────────────────────────────────
+let _whitelistMeta = {};   // {dominio: {comment, added_by, added_at}} dal server
+
 async function loadWhitelist() {
   const [, data] = await api("GET", "/api/whitelist");
   const listEl = document.getElementById("whitelist-list");
+  _whitelistMeta = data.meta || {};
   document.getElementById("whitelist-count").textContent = `${data.domains.length} voci`;
   if (!data.domains.length) {
     listEl.innerHTML = `<div class="manual-empty">Nessun dominio nella whitelist.</div>`;
     return;
   }
-  listEl.innerHTML = data.domains.map(d => `
-    <div class="manual-item" data-domain="${d}">
-      <span>${d}</span>
-      <button class="del-btn" title="Rimuovi" onclick="deleteWhitelist('${d}')">&#x2715;</button>
-    </div>`).join("");
+  listEl.innerHTML = data.domains.map(d => {
+    const m = _whitelistMeta[d] || {};
+    const comment = m.comment || "";
+    const info = [m.added_by, _fmtDate(m.added_at)].filter(Boolean).join(" · ");
+    const title = esc([comment, info].filter(Boolean).join("\n"));
+    return `
+    <div class="manual-item${comment ? " has-comment" : ""}" data-domain="${d}">
+      <div class="mi-main" title="${title}">
+        <span>${d}</span>
+        ${comment ? `<span class="mi-comment">${esc(comment)}</span>` : ""}
+        <span class="mi-date">${_addedLine(m)}</span>
+      </div>
+      <div class="mi-actions">
+        <button class="edit-btn" title="${comment ? "Modifica commento" : "Aggiungi commento"}" onclick="editWhitelistComment('${d}')">&#x270E;</button>
+        <button class="del-btn" title="Rimuovi" onclick="deleteWhitelist('${d}')">&#x2715;</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function editWhitelistComment(domain) {
+  const current = (_whitelistMeta[domain] || {}).comment || "";
+  const value = prompt(`Commento per "${domain}" (vuoto per rimuoverlo):`, current);
+  if (value === null) return;  // annullato
+  const [status, data] = await api("PATCH", `/api/whitelist/${encodeURIComponent(domain)}`, { comment: value.trim() });
+  if (status !== 200) { toast(data.error || "Errore", "err"); return; }
+  toast(value.trim() ? "Commento aggiornato" : "Commento rimosso");
+  loadWhitelist();
 }
 
 async function addWhitelist() {
   const raw = document.getElementById("wl-add-input").value.trim().toLowerCase().replace(/\.$/, "");
   if (!raw) return;
+  const commentEl = document.getElementById("wl-comment");
+  const comment = commentEl.value.trim();
 
   const listEl = document.getElementById("whitelist-list");
   const emptyEl = listEl.querySelector(".manual-empty");
@@ -761,7 +835,7 @@ async function addWhitelist() {
   tempRow.className = "manual-item";
   tempRow.dataset.domain = raw;
   tempRow.style.opacity = "0.5";
-  tempRow.innerHTML = `<span>${raw}</span><span style="color:var(--muted);font-size:.75rem">…</span>`;
+  tempRow.innerHTML = `<div class="mi-main"><span>${esc(raw)}</span>${comment ? `<span class="mi-comment">${esc(comment)}</span>` : ""}</div><span style="color:var(--muted);font-size:.75rem">…</span>`;
   listEl.appendChild(tempRow);
 
   const countEl = document.getElementById("whitelist-count");
@@ -769,13 +843,14 @@ async function addWhitelist() {
   countEl.textContent = `${prevCount + 1} voci`;
   document.getElementById("wl-add-input").value = "";
 
-  const [status, data] = await api("POST", "/api/whitelist", { domain: raw });
+  const [status, data] = await api("POST", "/api/whitelist", { domain: raw, comment });
   if (status !== 200) {
     tempRow.remove();
     countEl.textContent = `${prevCount} voci`;
     toast(data.error || "Errore", "err");
     return;
   }
+  commentEl.value = "";
   toast(`"${raw}" aggiunto alla whitelist`);
   loadWhitelist();
 }
@@ -798,8 +873,11 @@ async function deleteWhitelist(domain) {
 
 async function addToWhitelist() {
   if (!lastSearched) return;
-  const [status, data] = await api("POST", "/api/whitelist", { domain: lastSearched });
+  const commentEl = document.getElementById("res-wl-comment-input");
+  const comment = commentEl.value.trim();
+  const [status, data] = await api("POST", "/api/whitelist", { domain: lastSearched, comment });
   if (status !== 200) { toast(data.error || "Errore", "err"); return; }
+  commentEl.value = "";
   toast(`"${lastSearched}" aggiunto alla whitelist`);
   loadWhitelist();
   searchDomain();
