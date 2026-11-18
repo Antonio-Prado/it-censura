@@ -12,7 +12,7 @@ gestione manuale dei domini bloccati.
 | Componente | Percorso | Funzione |
 |------------|----------|----------|
 | **Script blacklist ufficiali** | `censorship/update.sh` | Scarica e converte le blacklist delle autorità italiane in formato Unbound |
-| **Liste community** *(opzionale)* | `censorship/community.sh` | Scarica liste di malware, C2 e phishing (abuse.ch URLhaus e ThreatFox, scamblocklist, malicious-domains) con filtri contro i falsi positivi |
+| **Liste community** *(opzionale)* | `censorship/community.sh` | Scarica liste di malware, C2 e phishing (abuse.ch URLhaus e ThreatFox, scamblocklist, malicious-domains, HaGeZi) con filtri contro i falsi positivi |
 | **Aggiornamento settimanale** | `weekly_update.sh` + `notify_mail.py` | Esegue l'aggiornamento e manda una mail solo se trova errori o avvisi |
 | **Sincronizzazione Piracy Shield** | `censorship/ps_sync.py` | Preleva FQDN e IP da Piracy Shield, aggiorna Unbound e i file per BGP blackhole |
 | **BGP blackhole** | `censorship/ps_bgp_push.sh` | Carica gli IP Piracy Shield in OpenBGPD |
@@ -347,6 +347,32 @@ configurazione al reload come utente non privilegiato.
 | `scamblocklist` | [durablenapkin/scamblocklist](https://github.com/durablenapkin/scamblocklist) | Truffe online | MIT |
 | `phishdomains` | [romainmarcoux/malicious-domains](https://github.com/romainmarcoux/malicious-domains) | Aggregato di fonti di phishing | MIT (verificare i termini delle fonti aggregate) |
 
+Fonti **opzionali** [HaGeZi](https://github.com/hagezi/dns-blocklists) (GPL-3.0, aggiornate più volte al
+giorno), da aggiungere esplicitamente a `COMMUNITY_LISTS`:
+
+| Nome | Lista HaGeZi | Contenuto | Voci (circa) |
+|------|--------------|-----------|--------------|
+| `hagezi-tif` | Threat Intelligence Feeds (`HAGEZI_TIF`: `tif.mini`, `tif.medium`, `tif`) | Malware, phishing, truffe, cryptojacking, C2 | 190 000 / 410 000 / 2,2 milioni |
+| `hagezi-multi` | Multi normal | Pubblicità, tracker, telemetria | 190 000 |
+| `hagezi-piracy` | anti.piracy | Siti e servizi di pirateria | 60 000 |
+| `hagezi-smarttv` | native LG webOS + Samsung + Roku | Telemetria delle smart TV | 700 |
+
+`hagezi-tif` è una lista di sicurezza e può sostituire liste generiche di phishing, frodi e malware non
+più mantenute. La versione completa `tif` richiede molta memoria per Unbound: `tif.medium` è un buon
+compromesso per un server con 4 GB di RAM.
+
+> **Liste di contenuto.** `hagezi-multi`, `hagezi-piracy` e `hagezi-smarttv` non bloccano minacce ma
+> contenuti: sono adatte alla rete interna di un ente o di un'azienda. Un operatore che fornisce accesso
+> a internet a terzi deve valutare il Regolamento UE 2015/2120 sull'internet aperto (art. 3, par. 3), che
+> ammette blocchi solo per obblighi di legge, sicurezza e integrità della rete, congestione. Per queste
+> tre liste il filtro Tranco è disattivato, perché i domini pubblicitari e di pirateria sono popolari per
+> natura: eventuali falsi positivi si gestiscono con la whitelist.
+
+```sh
+COMMUNITY_LISTS="urlhaus threatfox scamblocklist phishdomains hagezi-tif hagezi-multi" \
+BL_DIR=/etc/unbound/blacklists sh censorship/community.sh
+```
+
 Le API di export di abuse.ch richiedono una chiave gratuita: account su
 [auth.abuse.ch](https://auth.abuse.ch/), poi "Generate Key". Salvarla in un file leggibile solo da root
 (`ABUSECH_KEY_FILE`, default `BL_DIR/.abusech_authkey`, permessi `600`) e **mai nel repository**.
@@ -376,7 +402,8 @@ BL_DIR=/etc/unbound/blacklists sh censorship/community.sh \
 | `BL_DIR` | `/etc/unbound/blacklists` | Directory dei file community |
 | `ABUSECH_KEY_FILE` | `$BL_DIR/.abusech_authkey` | File con la chiave abuse.ch |
 | `COMMUNITY_LISTS` | `urlhaus threatfox scamblocklist phishdomains` | Fonti da aggiornare |
-| `TRANCO_TOP` | `100000` | Siti popolari esclusi; `0` = nessuna esclusione |
+| `TRANCO_TOP` | `100000` | Siti popolari esclusi; `0` = nessuna esclusione (le liste HaGeZi di contenuto non lo usano) |
+| `HAGEZI_TIF` | `tif.medium` | Variante di `hagezi-tif`: `tif.mini`, `tif.medium` o `tif` |
 
 ### Unire le liste: `BL_concat.sh`
 

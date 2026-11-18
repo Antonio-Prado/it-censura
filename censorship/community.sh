@@ -10,6 +10,20 @@
 #   scamblocklist  durablenapkin/scamblocklist (MIT): truffe online.
 #   phishdomains   romainmarcoux/malicious-domains (MIT): aggregato di fonti di phishing.
 #
+# Fonti opzionali HaGeZi (https://github.com/hagezi/dns-blocklists, GPL-3.0, aggiornate piu'
+# volte al giorno), da aggiungere a COMMUNITY_LISTS:
+#   hagezi-tif      Threat Intelligence Feeds: malware, phishing, truffe, cryptojacking, C2.
+#                   Variante con HAGEZI_TIF: tif.mini (~190k), tif.medium (~410k, default),
+#                   tif (~2,2 milioni: richiede molta RAM per Unbound).
+#   hagezi-multi    pubblicita', tracker, telemetria ("Multi normal", ~190k)
+#   hagezi-piracy   siti e servizi di pirateria (anti.piracy, ~60k)
+#   hagezi-smarttv  telemetria delle smart TV LG webOS, Samsung, Roku
+# hagezi-multi, hagezi-piracy e hagezi-smarttv filtrano CONTENUTI, non minacce: vanno bene per la
+# rete interna di un ente o di un'azienda. Un operatore che offre accesso a internet a terzi deve
+# valutare il Regolamento UE 2015/2120 (art. 3, par. 3), che limita i blocchi a obblighi di legge,
+# sicurezza e integrita' della rete, congestione. Per queste tre il filtro Tranco e' disattivato:
+# i domini pubblicitari e di pirateria sono popolari per natura.
+#
 # Ogni fonte passa da community_filter.py, che scarta IP, nomi malformati, .gov.it, suffissi
 # pubblici (Public Suffix List) e i domini fra i primi N di Tranco (falsi positivi probabili).
 # Se un download fallisce o la lista e' anomala, il BL_<nome>.conf precedente resta intatto:
@@ -26,12 +40,15 @@
 #   ABUSECH_KEY_FILE  File con la chiave abuse.ch    (default: $BL_DIR/.abusech_authkey)
 #   COMMUNITY_LISTS   Fonti da aggiornare            (default: "urlhaus threatfox scamblocklist phishdomains")
 #   TRANCO_TOP        Siti popolari esclusi (top N)  (default: 100000; 0 = nessuna esclusione)
+#   HAGEZI_TIF        Variante di hagezi-tif         (default: tif.medium)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BL_DIR="${BL_DIR:-/etc/unbound/blacklists}"
 KEY_FILE="${ABUSECH_KEY_FILE:-${BL_DIR}/.abusech_authkey}"
 LISTS="${COMMUNITY_LISTS:-urlhaus threatfox scamblocklist phishdomains}"
 TOP="${TRANCO_TOP:-100000}"
+HAGEZI_TIF="${HAGEZI_TIF:-tif.medium}"
+HAGEZI_BASE=https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard
 export BL_DIR
 
 mkdir -p "${BL_DIR}"
@@ -48,9 +65,23 @@ abusech_get() {
     [ "${code}" = "200" ]
 }
 
-# Applica il filtro comune. $1 nome, $2 formato (hosts|domains), $3 file scaricato, $4 minimo domini
+# Applica il filtro comune. $1 nome, $2 formato (hosts|domains), $3 file scaricato, $4 minimo domini,
+# $5 (opzionale) siti popolari esclusi, al posto di TRANCO_TOP
 filter() {
-    python3 "${SCRIPT_DIR}/community_filter.py" "$1" "$2" "$3" --min "$4" --top "${TOP}"
+    python3 "${SCRIPT_DIR}/community_filter.py" "$1" "$2" "$3" --min "$4" --top "${5:-${TOP}}"
+}
+
+# Scarica una o piu' liste HaGeZi "wildcard onlydomains" e le concatena in $1.
+# Ogni file deve contenere "# Number of entries" (scarta risposte troncate o pagine d'errore).
+hagezi_get() {
+    out="$1"; shift
+    : > "${out}"
+    for f in "$@"; do
+        curl -fsSL --max-time 180 "${HAGEZI_BASE}/${f}-onlydomains.txt" -o "${out}.part" || return 1
+        grep -q '^# Number of entries' "${out}.part" || return 1
+        cat "${out}.part" >> "${out}"
+    done
+    rm -f "${out}.part"
 }
 
 has_key() { [ -s "${KEY_FILE}" ]; }
@@ -105,12 +136,26 @@ for name in ${LISTS}; do
             rm -f "${NEW}.part"
             [ -s "${NEW}" ] && filter phishdomains domains "${NEW}" 50000 || ok=0
             ;;
+        hagezi-tif)
+            case "${HAGEZI_TIF}" in tif.mini) min=100000 ;; tif) min=1000000 ;; *) min=200000 ;; esac
+            hagezi_get "${NEW}" "${HAGEZI_TIF}" && filter hagezi-tif domains "${NEW}" "${min}" || ok=0
+            ;;
+        hagezi-multi)
+            hagezi_get "${NEW}" multi && filter hagezi-multi domains "${NEW}" 80000 0 || ok=0
+            ;;
+        hagezi-piracy)
+            hagezi_get "${NEW}" anti.piracy && filter hagezi-piracy domains "${NEW}" 30000 0 || ok=0
+            ;;
+        hagezi-smarttv)
+            hagezi_get "${NEW}" native.lgwebos native.samsung native.roku \
+                && filter hagezi-smarttv domains "${NEW}" 300 0 || ok=0
+            ;;
         *)
             warn "${name}: fonte sconosciuta"
             ok=0
             ;;
     esac
-    rm -f "${NEW}"
+    rm -f "${NEW}" "${NEW}.part"
     if [ "${ok}" -ne 1 ]; then
         warn "${name}: aggiornamento fallito, resta la lista precedente"
         errors=$((errors + 1))
