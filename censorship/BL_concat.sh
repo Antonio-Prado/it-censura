@@ -53,8 +53,11 @@ fi
 
 # Raccoglie le voci community filtrando i domini malformati
 if ls "${BL_DIR}"/${COMMUNITY_GLOB} 2>/dev/null | grep -q .; then
+    # via anche i nomi riservati delle intestazioni dei file hosts (localhost, local,
+    # broadcasthost, ip6-*, 0.0.0.0...): bloccarli renderebbe NXDOMAIN localhost e *.local
     cat "${BL_DIR}"/${COMMUNITY_GLOB} \
         | grep -vE '^local-zone: [^a-zA-Z0-9"*]' \
+        | grep -viE '^local-zone: "?(localhost|localhost\.localdomain|localdomain|local|broadcasthost|ip6-[a-z]+|0\.0\.0\.0)\.?"? ' \
         | awk '{gsub(/\. /, " "); print tolower($0)}' \
         | sort | uniq \
         > "${TMP_COMM}"
